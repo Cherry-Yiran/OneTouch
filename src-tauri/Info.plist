@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>OneTouch uses Bluetooth to show AirPods battery information and connect or disconnect paired AirPods.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>OneTouch uses macOS automation only when you operate a control that needs System Events.</string>
+  <key>NSFocusStatusUsageDescription</key>
+  <string>OneTouch reads Focus status so its menu bar switch always matches the current macOS Focus mode.</string>
+</dict>
+</plist>

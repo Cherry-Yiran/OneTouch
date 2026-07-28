@@ -1,0 +1,27 @@
+[package]
+name = "onetouch"
+version = "0.1.0"
+description = "A quiet macOS menu bar control desk"
+authors = ["Ryan Design"]
+edition = "2021"
+
+[lib]
+name = "onetouch_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+cc = "1"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-global-shortcut = "2.3.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSView", "NSWindow", "objc2-quartz-core"] }
+objc2-foundation = "0.3.2"
+objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }

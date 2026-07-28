@@ -1,0 +1,2146 @@
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::{CStr, CString},
+    env, fs,
+    io::Read,
+    os::raw::{c_char, c_int},
+    path::Path,
+    process::{Child, Command, Stdio},
+    sync::{Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant},
+};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::{
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    window::{Effect, EffectState, EffectsBuilder},
+    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect,
+    TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
+#[cfg(not(target_os = "macos"))]
+use tauri::{image::Image, tray::TrayIconBuilder};
+
+const ALL_CONTROL_IDS: [&str; 28] = [
+    "desktop", "darkMode", "awake", "airpods", "dnd", "nightShift", "screenSaver",
+    "trueTone", "frontApp", "muteMic", "xcodeClean", "emptyTrash", "ejectDisk",
+    "clipboard", "hideWindow", "hideDock", "lowPower", "highPower", "music",
+    "spotify", "hiddenFiles", "displaySleep", "resolution", "hideWidgets",
+    "stageManager", "cleanScreen", "lockKeyboard", "lockScreen",
+];
+const PREFERENCES_DOMAIN: &str = "design.ryan.switchboard.menubar.v2";
+const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
+const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn sb_status_item_create(
+        callback: Option<extern "C" fn(x: f64, y: f64, width: f64, height: f64)>,
+    ) -> c_int;
+    fn sb_status_item_set_icon_kind(kind: *const c_char) -> c_int;
+    fn sb_status_item_is_visible() -> c_int;
+    fn sb_display_configuration_json() -> *mut c_char;
+    fn sb_display_set_mode(
+        display_id: u32,
+        mode_id: i32,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_audio_device_snapshot_json() -> *mut c_char;
+    fn sb_audio_device_set_connected(enabled: c_int, error_output: *mut *mut c_char) -> c_int;
+    fn sb_free_string(value: *mut c_char);
+    fn sb_clean_screen_start(error_output: *mut *mut c_char) -> c_int;
+    fn sb_clean_screen_stop();
+    fn sb_clean_screen_active() -> c_int;
+    fn sb_keyboard_lock_start(error_output: *mut *mut c_char) -> c_int;
+    fn sb_keyboard_lock_stop();
+    fn sb_keyboard_lock_active() -> c_int;
+    fn sb_night_shift_get(
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_night_shift_set(
+        enabled: c_int,
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_true_tone_get(
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_true_tone_set(
+        enabled: c_int,
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_low_power_get(
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_low_power_set(
+        enabled: c_int,
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_high_power_get(
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_high_power_set(
+        enabled: c_int,
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_focus_get(
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+    fn sb_focus_set(
+        enabled: c_int,
+        status: *mut NativeFeatureStatus,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct NativeFeatureStatus {
+    available: c_int,
+    state_known: c_int,
+    enabled: c_int,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioDeviceSnapshot {
+    paired: bool,
+    connected: bool,
+    name: String,
+    battery_level: Option<u8>,
+    battery_left: Option<u8>,
+    battery_right: Option<u8>,
+    battery_case: Option<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayModeOption {
+    id: i32,
+    width: usize,
+    height: usize,
+    pixel_width: usize,
+    pixel_height: usize,
+    refresh_rate: f64,
+    hi_dpi: bool,
+    current: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayOption {
+    id: u32,
+    name: String,
+    main: bool,
+    built_in: bool,
+    current_mode_id: i32,
+    current_width: usize,
+    current_height: usize,
+    modes: Vec<DisplayModeOption>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayConfiguration {
+    displays: Vec<DisplayOption>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalDisk {
+    id: String,
+    name: String,
+    excluded: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ControlSnapshot {
+    state: bool,
+    state_known: bool,
+    available: bool,
+    mode: &'static str,
+    message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSnapshot {
+    controls: HashMap<String, ControlSnapshot>,
+    audio_device: AudioDeviceSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SwitchResult {
+    state: bool,
+    state_known: bool,
+    mode: &'static str,
+    message: Option<String>,
+}
+
+#[cfg(not(target_os = "macos"))]
+const TRAY_COMMAND_ICON: Image<'static> = tauri::include_image!("./icons/tray-command-lime.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_GRID_ICON: Image<'static> = tauri::include_image!("./icons/tray-grid-lime.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_BOLT_ICON: Image<'static> = tauri::include_image!("./icons/tray-bolt-lime.png");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PopoverSurface {
+    LiquidGlass,
+    VibrancyFallback,
+}
+
+const POPOVER_CORNER_RADIUS: f64 = 20.0;
+
+fn preferred_popover_surface(liquid_glass_available: bool) -> PopoverSurface {
+    if liquid_glass_available {
+        PopoverSurface::LiquidGlass
+    } else {
+        PopoverSurface::VibrancyFallback
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_native_popover_window(window: &WebviewWindow) -> bool {
+    use objc2_app_kit::{
+        NSAutoresizingMaskOptions, NSColor, NSGlassEffectView, NSGlassEffectViewStyle, NSView,
+        NSWindow,
+    };
+    use objc2::{runtime::AnyClass, ClassType};
+    use objc2_foundation::{MainThreadMarker, NSObjectProtocol};
+    use objc2_quartz_core::kCACornerCurveContinuous;
+
+    unsafe fn apply_rounded_clip(view: &NSView) {
+        view.setWantsLayer(true);
+        if let Some(layer) = view.layer() {
+            layer.setCornerRadius(POPOVER_CORNER_RADIUS);
+            layer.setCornerCurve(kCACornerCurveContinuous);
+            layer.setMasksToBounds(true);
+        }
+    }
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    if AnyClass::get(c"NSGlassEffectView").is_none() {
+        return false;
+    }
+    let Ok(native_window) = window.ns_window() else {
+        return false;
+    };
+
+    unsafe {
+        let native_window: &NSWindow = &*native_window.cast();
+        native_window.setOpaque(false);
+        native_window.setBackgroundColor(Some(&NSColor::clearColor()));
+        native_window.setHasShadow(false);
+
+        let Some(content_root) = native_window.contentView() else {
+            return false;
+        };
+
+        // NSGlassEffectView's cornerRadius only shapes its own material. The layer
+        // mask is what prevents the rectangular WebView host from showing through
+        // at the corners. Reapply it when a cached popover window is reused.
+        apply_rounded_clip(&content_root);
+        if content_root.isKindOfClass(NSGlassEffectView::class()) {
+            return true;
+        }
+
+        let glass = NSGlassEffectView::new(mtm);
+        glass.setFrame(content_root.frame());
+        glass.setStyle(NSGlassEffectViewStyle::Regular);
+        glass.setCornerRadius(POPOVER_CORNER_RADIUS);
+        glass.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        apply_rounded_clip(&glass);
+        content_root.setFrame(glass.bounds());
+        content_root.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+
+        native_window.setContentView(Some(&glass));
+        glass.setContentView(Some(&content_root));
+    }
+
+    true
+}
+
+fn configure_popover_surface(window: &WebviewWindow) -> tauri::Result<PopoverSurface> {
+    #[cfg(target_os = "macos")]
+    if prepare_native_popover_window(window) {
+        return Ok(preferred_popover_surface(true));
+    }
+
+    window.set_effects(
+        EffectsBuilder::new()
+            .effect(Effect::Popover)
+            .state(EffectState::Active)
+            .radius(POPOVER_CORNER_RADIUS)
+            .build(),
+    )?;
+    Ok(preferred_popover_surface(false))
+}
+
+#[derive(Default)]
+struct NativeState {
+    caffeinate: Mutex<Option<Child>>,
+    previous_input_volume: Mutex<Option<u8>>,
+    music_playing: Mutex<Option<bool>>,
+    spotify_playing: Mutex<Option<bool>>,
+    airpods_operation: Mutex<()>,
+    tray_anchor: Mutex<Option<Rect>>,
+}
+
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+#[cfg(not(target_os = "macos"))]
+fn menu_bar_icon(kind: &str) -> Image<'static> {
+    match kind {
+        "dots" => TRAY_GRID_ICON.clone(),
+        "bolt" => TRAY_BOLT_ICON.clone(),
+        _ => TRAY_COMMAND_ICON.clone(),
+    }
+}
+
+#[tauri::command]
+fn set_menu_icon(_app: AppHandle, icon: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let icon = CString::new(icon)
+            .map_err(|_| "The menu bar icon name contains invalid characters".to_string())?;
+        let result = unsafe { sb_status_item_set_icon_kind(icon.as_ptr()) };
+        return if result == 0 {
+            Ok(())
+        } else {
+            Err("Unable to update the native menu bar icon".to_string())
+        };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let tray = _app
+        .tray_by_id("switchboard-tray")
+        .ok_or_else(|| "The menu bar icon is unavailable".to_string())?;
+
+    #[cfg(not(target_os = "macos"))]
+    tray.set_icon_with_as_template(Some(menu_bar_icon(&icon)), false)
+        .map_err(|error| format!("Unable to update the menu bar icon: {error}"))
+}
+
+fn run_process(program: &str, args: &[&str]) -> Result<(), String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Unable to run {program}: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if message.is_empty() {
+            format!("{program} exited with {}", output.status)
+        } else {
+            message
+        })
+    }
+}
+
+fn run_process_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(), String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Unable to run {program}: {error}"))?;
+    let started = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut message = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    let _ = stderr.read_to_string(&mut message);
+                }
+
+                return if status.success() {
+                    Ok(())
+                } else {
+                    let message = message.trim();
+                    Err(if message.is_empty() {
+                        format!("{program} exited with {status}")
+                    } else {
+                        message.to_string()
+                    })
+                };
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "macOS did not respond within {:.0} seconds. A permission request may be waiting.",
+                    timeout.as_secs_f32()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Unable to wait for {program}: {error}"));
+            }
+        }
+    }
+}
+
+fn run_osascript(script: &str) -> Result<(), String> {
+    run_process_with_timeout(
+        "/usr/bin/osascript",
+        &["-e", script],
+        Duration::from_secs(8),
+    )
+}
+
+fn run_control_center_toggle(id: &str, enabled: bool) -> Result<(), String> {
+    let desired = if enabled { 1 } else { 0 };
+    let (menu_identifier, target_identifier, focus_mode) = match id {
+        "lowPower" => ("com.apple.menuextra.battery", "energy-mode-low", false),
+        "highPower" => ("com.apple.menuextra.battery", "energy-mode-high", false),
+        "dnd" => (
+            "com.apple.menuextra.focusmode",
+            "focus-mode-activity-com.apple.donotdisturb.mode.default",
+            true,
+        ),
+        _ => return Err(format!("{id} has no Control Center switch")),
+    };
+    let target_match = if focus_mode && !enabled {
+        "identifierValue starts with \"focus-mode-activity-\" and (value of candidate as integer) is 1".to_string()
+    } else {
+        format!("identifierValue is \"{target_identifier}\"")
+    };
+    let already_active = if focus_mode && enabled {
+        r#"
+          repeat with candidate in (entire contents of window 1)
+            try
+              set identifierValue to value of attribute "AXIdentifier" of candidate as text
+              if identifierValue starts with "focus-mode-activity-" and (value of candidate as integer) is 1 then set activeFocusFound to true
+            end try
+          end repeat
+        "#
+    } else {
+        ""
+    };
+    let target_discovery = if focus_mode {
+        format!(
+            r#"
+      repeat with candidate in (entire contents of window 1)
+        try
+          set identifierValue to value of attribute "AXIdentifier" of candidate as text
+          if {target_match} then set targetControl to candidate
+        end try
+      end repeat
+            "#
+        )
+    } else {
+        format!(
+            r#"
+      set targetControl to checkbox 1 of scroll area 1 of group 1 of window 1
+      set identifierValue to value of attribute "AXIdentifier" of targetControl as text
+      if identifierValue is not "{target_identifier}" then error "Unexpected Control Center switch"
+            "#
+        )
+    };
+    let skip_press = if focus_mode && enabled {
+        "if activeFocusFound is false then perform action \"AXPress\" of targetControl".to_string()
+    } else {
+        format!(
+            "if (value of targetControl as integer) is not {desired} then perform action \"AXPress\" of targetControl"
+        )
+    };
+    let script = format!(
+        r#"
+tell application "System Events"
+  tell process "ControlCenter"
+    set statusItem to missing value
+    set panelOpened to false
+    repeat with candidate in menu bar items of menu bar 1
+      try
+        if (value of attribute "AXIdentifier" of candidate as text) is "{menu_identifier}" then set statusItem to candidate
+      end try
+    end repeat
+    if statusItem is missing value then error "Control Center menu item is unavailable"
+    try
+      perform action "AXPress" of statusItem
+      set panelOpened to true
+      delay 0.2
+      set targetControl to missing value
+      set activeFocusFound to false
+      {already_active}
+      {target_discovery}
+      if targetControl is missing value and activeFocusFound is false then error "Control Center switch is unavailable"
+      if targetControl is not missing value then {skip_press}
+      delay 0.25
+      perform action "AXPress" of statusItem
+      set panelOpened to false
+    on error errorMessage number errorNumber
+      if panelOpened then
+        try
+          perform action "AXPress" of statusItem
+        end try
+      end if
+      error errorMessage number errorNumber
+    end try
+  end tell
+end tell
+        "#
+    );
+    run_process_with_timeout(
+        "/usr/bin/osascript",
+        &["-e", &script],
+        Duration::from_secs(6),
+    )
+}
+
+fn read_process(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn read_process_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).ok().map(|_| output)
+    });
+    let started = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = reader.join().ok().flatten()?;
+                return status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&output).trim().to_string());
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+        }
+    }
+}
+
+fn control_mode(id: &str) -> &'static str {
+    match id {
+        "screenSaver" | "frontApp" | "xcodeClean" | "emptyTrash" | "ejectDisk"
+        | "clipboard" | "hideWindow" | "displaySleep" | "lockScreen" => {
+            "action"
+        }
+        "resolution" => "choice",
+        _ => "toggle",
+    }
+}
+
+fn is_direct_system_toggle(id: &str) -> bool {
+    matches!(id, "dnd" | "nightShift" | "trueTone" | "lowPower" | "highPower")
+}
+
+fn high_power_supported() -> bool {
+    read_process("/usr/bin/pmset", &["-g", "custom"])
+        .is_some_and(|output| output.lines().any(|line| {
+            line.split_whitespace().next() == Some("highpowermode")
+        }))
+}
+
+fn parse_percentage(value: Option<&Value>) -> Option<u8> {
+    value?
+        .as_str()?
+        .trim_end_matches('%')
+        .parse::<u8>()
+        .ok()
+}
+
+fn normalized_device_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn find_audio_device_battery(
+    value: &Value,
+    preferred_name: &str,
+) -> Option<(String, Option<u8>, Option<u8>, Option<u8>, Option<u8>)> {
+    match value {
+        Value::Object(object) => {
+            let preferred = normalized_device_name(preferred_name);
+            for (name, details) in object {
+                let normalized = normalized_device_name(name);
+                if !preferred.is_empty()
+                    && (normalized == preferred
+                        || normalized.contains(&preferred)
+                        || preferred.contains(&normalized)) {
+                    let details = details.as_object()?;
+                    return Some((
+                        name.clone(),
+                        parse_percentage(details.get("device_batteryLevel")),
+                        parse_percentage(details.get("device_batteryLevelLeft")),
+                        parse_percentage(details.get("device_batteryLevelRight")),
+                        parse_percentage(details.get("device_batteryLevelCase")),
+                    ));
+                }
+            }
+            object
+                .values()
+                .find_map(|child| find_audio_device_battery(child, preferred_name))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|child| find_audio_device_battery(child, preferred_name)),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn take_native_string(pointer: *mut c_char) -> Option<String> {
+    if pointer.is_null() {
+        return None;
+    }
+    let value = unsafe { CStr::from_ptr(pointer) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { sb_free_string(pointer) };
+    Some(value)
+}
+
+#[cfg(target_os = "macos")]
+fn native_audio_device_base_snapshot() -> AudioDeviceSnapshot {
+    let raw = unsafe { sb_audio_device_snapshot_json() };
+    take_native_string(raw)
+        .and_then(|json| serde_json::from_str::<AudioDeviceSnapshot>(&json).ok())
+        .unwrap_or_else(|| AudioDeviceSnapshot {
+            name: "Bluetooth headphones".into(),
+            ..AudioDeviceSnapshot::default()
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
+    let mut snapshot = native_audio_device_base_snapshot();
+
+    if !snapshot.connected {
+        return snapshot;
+    }
+
+    if let Some(output) = read_process_with_timeout(
+        "/usr/sbin/system_profiler",
+        &["SPBluetoothDataType", "-json", "-detailLevel", "mini"],
+        Duration::from_secs(3),
+    ) {
+        if let Ok(profile) = serde_json::from_str::<Value>(&output) {
+            if let Some((name, level, left, right, case)) =
+                find_audio_device_battery(&profile, &snapshot.name)
+            {
+                snapshot.name = name;
+                snapshot.battery_level = level;
+                snapshot.battery_left = left;
+                snapshot.battery_right = right;
+                snapshot.battery_case = case;
+            }
+        }
+    }
+    snapshot
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_audio_device_base_snapshot() -> AudioDeviceSnapshot {
+    AudioDeviceSnapshot {
+        name: "Bluetooth headphones".into(),
+        ..AudioDeviceSnapshot::default()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
+    native_audio_device_base_snapshot()
+}
+
+#[cfg(target_os = "macos")]
+fn native_helper_result(
+    operation: impl FnOnce(*mut *mut c_char) -> c_int,
+) -> Result<(), String> {
+    let mut error_pointer: *mut c_char = std::ptr::null_mut();
+    let status = operation(&mut error_pointer);
+    if status == 0 {
+        if !error_pointer.is_null() {
+            unsafe { sb_free_string(error_pointer) };
+        }
+        Ok(())
+    } else {
+        Err(take_native_string(error_pointer)
+            .unwrap_or_else(|| format!("macOS returned error {status}")))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn native_display_configuration() -> Result<DisplayConfiguration, String> {
+    let raw = unsafe { sb_display_configuration_json() };
+    let json = take_native_string(raw)
+        .ok_or_else(|| "macOS could not read the connected displays".to_string())?;
+    let configuration = serde_json::from_str::<DisplayConfiguration>(&json)
+        .map_err(|error| format!("macOS returned invalid display information: {error}"))?;
+    if configuration.displays.is_empty() {
+        return Err("No active displays were found".to_string());
+    }
+    Ok(configuration)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_display_configuration() -> Result<DisplayConfiguration, String> {
+    Err("Display resolution control is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
+fn set_native_display_mode(display_id: u32, mode_id: i32) -> Result<(), String> {
+    native_helper_result(|error| unsafe { sb_display_set_mode(display_id, mode_id, error) })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_native_display_mode(_display_id: u32, _mode_id: i32) -> Result<(), String> {
+    Err("Display resolution control is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
+fn native_feature_result(
+    operation: impl FnOnce(*mut NativeFeatureStatus, *mut *mut c_char) -> c_int,
+) -> Result<(NativeFeatureStatus, Option<String>), String> {
+    let mut feature = NativeFeatureStatus::default();
+    let mut error_pointer: *mut c_char = std::ptr::null_mut();
+    let status = operation(&mut feature, &mut error_pointer);
+    let message = take_native_string(error_pointer);
+    if status == 0 {
+        Ok((feature, message))
+    } else {
+        Err(message.unwrap_or_else(|| format!("macOS returned error {status}")))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_direct_system_toggle(id: &str) -> Result<(NativeFeatureStatus, Option<String>), String> {
+    match id {
+        "dnd" => native_feature_result(|status, error| unsafe { sb_focus_get(status, error) }),
+        "nightShift" => {
+            native_feature_result(|status, error| unsafe { sb_night_shift_get(status, error) })
+        }
+        "trueTone" => {
+            native_feature_result(|status, error| unsafe { sb_true_tone_get(status, error) })
+        }
+        "lowPower" => {
+            native_feature_result(|status, error| unsafe { sb_low_power_get(status, error) })
+        }
+        "highPower" if high_power_supported() => {
+            native_feature_result(|status, error| unsafe { sb_high_power_get(status, error) })
+        }
+        "highPower" => Ok((
+            NativeFeatureStatus {
+                available: 0,
+                state_known: 1,
+                enabled: 0,
+            },
+            Some("High Power Mode is unsupported on this Mac".into()),
+        )),
+        _ => Err(format!("{id} is not a direct system toggle")),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn get_direct_system_toggle(id: &str) -> Result<(NativeFeatureStatus, Option<String>), String> {
+    Err(format!("{id} is only available on macOS"))
+}
+
+#[cfg(target_os = "macos")]
+fn set_direct_system_toggle(id: &str, enabled: bool) -> Result<NativeFeatureStatus, String> {
+    let native_result = match id {
+        "dnd" => native_feature_result(|status, error| unsafe {
+            sb_focus_set(enabled as c_int, status, error)
+        }),
+        "nightShift" => native_feature_result(|status, error| unsafe {
+            sb_night_shift_set(enabled as c_int, status, error)
+        }),
+        "trueTone" => native_feature_result(|status, error| unsafe {
+            sb_true_tone_set(enabled as c_int, status, error)
+        }),
+        "lowPower" => native_feature_result(|status, error| unsafe {
+            sb_low_power_set(enabled as c_int, status, error)
+        }),
+        "highPower" if high_power_supported() => native_feature_result(|status, error| unsafe {
+            sb_high_power_set(enabled as c_int, status, error)
+        }),
+        "highPower" => Err("High Power Mode is unsupported on this Mac".into()),
+        _ => Err(format!("{id} is not a direct system toggle")),
+    };
+    match native_result {
+        Ok((feature, _)) => Ok(feature),
+        Err(error)
+            if id == "lowPower"
+                || id == "highPower"
+                || (id == "dnd"
+                    && !error.to_ascii_lowercase().contains("permission")) =>
+        {
+            run_control_center_toggle(id, enabled)?;
+            thread::sleep(Duration::from_millis(250));
+            let (feature, _) = get_direct_system_toggle(id)?;
+            if feature.state_known != 0 && feature.enabled == enabled as c_int {
+                Ok(feature)
+            } else {
+                Err(format!("{id} did not reach the requested state"))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_direct_system_toggle(id: &str, _enabled: bool) -> Result<NativeFeatureStatus, String> {
+    Err(format!("{id} is only available on macOS"))
+}
+
+#[cfg(target_os = "macos")]
+fn set_audio_device_connected(enabled: bool) -> Result<(), String> {
+    native_helper_result(|error| unsafe { sb_audio_device_set_connected(enabled as c_int, error) })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_audio_device_connected(_enabled: bool) -> Result<(), String> {
+    Err("Bluetooth audio control is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
+fn set_clean_screen(enabled: bool) -> Result<(), String> {
+    if enabled {
+        native_helper_result(|error| unsafe { sb_clean_screen_start(error) })
+    } else {
+        unsafe { sb_clean_screen_stop() };
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_clean_screen(_enabled: bool) -> Result<(), String> {
+    Err("Screen cleaning mode is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
+fn clean_screen_active() -> bool {
+    unsafe { sb_clean_screen_active() != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clean_screen_active() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn set_keyboard_locked(enabled: bool) -> Result<(), String> {
+    if enabled {
+        native_helper_result(|error| unsafe { sb_keyboard_lock_start(error) })
+    } else {
+        unsafe { sb_keyboard_lock_stop() };
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_keyboard_locked(_enabled: bool) -> Result<(), String> {
+    Err("Keyboard locking is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
+fn keyboard_lock_active() -> bool {
+    unsafe { sb_keyboard_lock_active() != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keyboard_lock_active() -> bool {
+    false
+}
+
+fn set_awake(enabled: bool, state: &NativeState) -> Result<(), String> {
+    let mut caffeinate = state
+        .caffeinate
+        .lock()
+        .map_err(|_| "Unable to access the keep-awake process".to_string())?;
+
+    if enabled {
+        if caffeinate.is_none() {
+            let child = Command::new("/usr/bin/caffeinate")
+                .args(["-dimsu"])
+                .spawn()
+                .map_err(|error| format!("Unable to start caffeinate: {error}"))?;
+            *caffeinate = Some(child);
+        }
+    } else if let Some(mut child) = caffeinate.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    Ok(())
+}
+
+fn set_desktop_hidden(enabled: bool) -> Result<(), String> {
+    run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            "com.apple.finder",
+            "CreateDesktop",
+            "-bool",
+            if enabled { "false" } else { "true" },
+        ],
+    )?;
+    run_process("/usr/bin/killall", &["Finder"])
+}
+
+fn set_dark_mode(enabled: bool) -> Result<(), String> {
+    let script = format!(
+        "tell application \"System Events\" to tell appearance preferences to set dark mode to {}",
+        if enabled { "true" } else { "false" }
+    );
+    run_osascript(&script)
+}
+
+fn set_dock_hidden(enabled: bool) -> Result<(), String> {
+    run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            "com.apple.dock",
+            "autohide",
+            "-bool",
+            if enabled { "true" } else { "false" },
+        ],
+    )?;
+    run_process("/usr/bin/killall", &["Dock"])
+}
+
+fn parse_defaults_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Some(true),
+        "0" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn read_window_manager_bool(key: &str) -> Option<bool> {
+    read_process(
+        "/usr/bin/defaults",
+        &["read", "com.apple.WindowManager", key],
+    )
+    .and_then(|value| parse_defaults_bool(&value))
+}
+
+fn write_window_manager_bool(key: &str, enabled: bool) -> Result<(), String> {
+    run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            "com.apple.WindowManager",
+            key,
+            "-bool",
+            if enabled { "true" } else { "false" },
+        ],
+    )
+}
+
+fn refresh_window_manager() -> Result<(), String> {
+    run_process("/usr/bin/killall", &["Dock"])
+}
+
+fn set_widgets_hidden(enabled: bool) -> Result<(), String> {
+    write_window_manager_bool("StandardHideWidgets", enabled)?;
+    write_window_manager_bool("StageManagerHideWidgets", enabled)?;
+    refresh_window_manager()?;
+    let standard = read_window_manager_bool("StandardHideWidgets");
+    let staged = read_window_manager_bool("StageManagerHideWidgets");
+    if standard == Some(enabled) && staged == Some(enabled) {
+        Ok(())
+    } else {
+        Err("macOS did not keep the requested desktop widget setting".into())
+    }
+}
+
+fn set_stage_manager(enabled: bool) -> Result<(), String> {
+    write_window_manager_bool("GloballyEnabled", enabled)?;
+    refresh_window_manager()?;
+    if read_window_manager_bool("GloballyEnabled") == Some(enabled) {
+        Ok(())
+    } else {
+        Err("macOS did not keep the requested Stage Manager setting".into())
+    }
+}
+
+fn input_volume() -> Option<u8> {
+    read_process(
+        "/usr/bin/osascript",
+        &["-e", "input volume of (get volume settings)"],
+    )?
+    .parse()
+    .ok()
+}
+
+fn saved_previous_input_volume() -> Option<u8> {
+    read_process(
+        "/usr/bin/defaults",
+        &["read", PREFERENCES_DOMAIN, PREVIOUS_INPUT_VOLUME_KEY],
+    )?
+    .parse::<u8>()
+    .ok()
+    .filter(|volume| *volume > 0 && *volume <= 100)
+}
+
+fn remember_previous_input_volume(volume: u8) {
+    let value = volume.to_string();
+    let _ = run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            PREFERENCES_DOMAIN,
+            PREVIOUS_INPUT_VOLUME_KEY,
+            "-int",
+            &value,
+        ],
+    );
+}
+
+fn forget_previous_input_volume() {
+    let _ = run_process(
+        "/usr/bin/defaults",
+        &["delete", PREFERENCES_DOMAIN, PREVIOUS_INPUT_VOLUME_KEY],
+    );
+}
+
+fn set_microphone_muted(enabled: bool, state: &NativeState) -> Result<(), String> {
+    let mut previous = state
+        .previous_input_volume
+        .lock()
+        .map_err(|_| "Unable to access the microphone state".to_string())?;
+
+    let target = if enabled {
+        if let Some(volume) = input_volume().filter(|volume| *volume > 0) {
+            *previous = Some(volume);
+            remember_previous_input_volume(volume);
+        }
+        0
+    } else {
+        previous
+            .as_ref()
+            .copied()
+            .or_else(saved_previous_input_volume)
+            .unwrap_or(50)
+    };
+
+    let script = format!("set volume input volume {target}");
+    run_osascript(&script)?;
+    if !enabled {
+        *previous = None;
+        forget_previous_input_volume();
+    }
+    Ok(())
+}
+
+fn set_hidden_files_visible(enabled: bool) -> Result<(), String> {
+    run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            "com.apple.finder",
+            "AppleShowAllFiles",
+            "-bool",
+            if enabled { "true" } else { "false" },
+        ],
+    )?;
+    run_process("/usr/bin/killall", &["Finder"])
+}
+
+fn set_music_playing(enabled: bool, state: &NativeState) -> Result<(), String> {
+    let script = if enabled {
+        "tell application \"Music\" to play"
+    } else {
+        "tell application \"Music\" to pause"
+    };
+    run_osascript(script)?;
+    let mut music_playing = state
+        .music_playing
+        .lock()
+        .map_err(|_| "Unable to remember the Music playback state".to_string())?;
+    *music_playing = Some(enabled);
+    Ok(())
+}
+
+fn spotify_available() -> bool {
+    Path::new("/Applications/Spotify.app").exists()
+        || env::var_os("HOME").is_some_and(|home| {
+            Path::new(&home)
+                .join("Applications")
+                .join("Spotify.app")
+                .exists()
+        })
+}
+
+fn set_spotify_playing(enabled: bool, state: &NativeState) -> Result<(), String> {
+    if !spotify_available() {
+        return Err("Spotify is not installed on this Mac".into());
+    }
+    let script = if enabled {
+        "tell application \"Spotify\" to play"
+    } else {
+        "tell application \"Spotify\" to pause"
+    };
+    run_osascript(script)?;
+    let mut spotify_playing = state
+        .spotify_playing
+        .lock()
+        .map_err(|_| "Unable to remember the Spotify playback state".to_string())?;
+    *spotify_playing = Some(enabled);
+    Ok(())
+}
+
+fn clean_xcode_derived_data() -> Result<(), String> {
+    let home = env::var_os("HOME").ok_or_else(|| "The home directory is unavailable".to_string())?;
+    let derived_data = Path::new(&home)
+        .join("Library")
+        .join("Developer")
+        .join("Xcode")
+        .join("DerivedData");
+
+    if !derived_data.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&derived_data).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+const EMPTY_TRASH_SCRIPT: &str = r#"
+tell application "Finder"
+  if (count of items of trash) is 0 then return
+  try
+    empty trash
+  on error errorMessage number errorNumber
+    -- Emptying is idempotent. Finder can report an error if another process
+    -- emptied the Trash between the preflight check and this command.
+    if (count of items of trash) is not 0 then error errorMessage number errorNumber
+  end try
+end tell
+"#;
+
+fn empty_trash() -> Result<(), String> {
+    run_osascript(EMPTY_TRASH_SCRIPT)
+}
+
+fn external_disk_ids(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(|value| value.trim_end_matches(':'))
+        .filter(|value| value.starts_with("/dev/disk"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn external_disk_name(output: &str) -> Option<String> {
+    ["Device / Media Name:", "Media Name:", "Volume Name:"]
+        .into_iter()
+        .find_map(|label| {
+            output.lines().find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                (key.trim() == label.trim_end_matches(':'))
+                    .then(|| value.trim().to_string())
+                    .filter(|value| !value.is_empty() && value != "Not applicable")
+            })
+        })
+}
+
+fn saved_eject_exclusions() -> HashSet<String> {
+    read_process(
+        "/usr/bin/defaults",
+        &["read", PREFERENCES_DOMAIN, EJECT_EXCLUSIONS_KEY],
+    )
+    .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+    .unwrap_or_default()
+    .into_iter()
+    .collect()
+}
+
+fn save_eject_exclusions(exclusions: &[String]) -> Result<(), String> {
+    let value = serde_json::to_string(exclusions)
+        .map_err(|error| format!("Unable to save disk exclusions: {error}"))?;
+    run_process(
+        "/usr/bin/defaults",
+        &[
+            "write",
+            PREFERENCES_DOMAIN,
+            EJECT_EXCLUSIONS_KEY,
+            "-string",
+            &value,
+        ],
+    )
+}
+
+fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
+    let output = Command::new("/usr/sbin/diskutil")
+        .args(["list", "external", "physical"])
+        .output()
+        .map_err(|error| format!("Unable to inspect external disks: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let exclusions = saved_eject_exclusions();
+    Ok(external_disk_ids(&String::from_utf8_lossy(&output.stdout))
+        .into_iter()
+        .map(|id| {
+            let name = read_process_with_timeout(
+                "/usr/sbin/diskutil",
+                &["info", &id],
+                Duration::from_secs(2),
+            )
+            .and_then(|details| external_disk_name(&details))
+            .unwrap_or_else(|| id.clone());
+            ExternalDisk {
+                excluded: exclusions.contains(&name),
+                id,
+                name,
+            }
+        })
+        .collect())
+}
+
+fn eject_external_disks() -> Result<(), String> {
+    let disks = external_disk_inventory()?;
+    if disks.is_empty() {
+        return Err("No external disks are connected".to_string());
+    }
+
+    for disk in disks.into_iter().filter(|disk| !disk.excluded) {
+        run_process("/usr/sbin/diskutil", &["eject", &disk.id])?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_external_disks() -> Result<Vec<ExternalDisk>, String> {
+    tauri::async_runtime::spawn_blocking(external_disk_inventory)
+        .await
+        .map_err(|error| format!("Unable to read external disks: {error}"))?
+}
+
+#[tauri::command]
+fn set_eject_exclusions(exclusions: Vec<String>) -> Result<(), String> {
+    let cleaned = exclusions
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= 512)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    save_eject_exclusions(&cleaned)
+}
+
+fn set_switch_blocking(
+    id: String,
+    enabled: bool,
+    state: &NativeState,
+) -> Result<SwitchResult, String> {
+    let mode = control_mode(&id);
+    if is_direct_system_toggle(&id) {
+        let feature = set_direct_system_toggle(&id, enabled)?;
+        return Ok(SwitchResult {
+            state: feature.enabled != 0,
+            state_known: feature.state_known != 0,
+            mode,
+            message: None,
+        });
+    }
+
+    let _airpods_guard = if id == "airpods" {
+        Some(
+            state
+                .airpods_operation
+                .try_lock()
+                .map_err(|_| "A Bluetooth audio device operation is already in progress".to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let operation = match id.as_str() {
+        "awake" => set_awake(enabled, state),
+        "desktop" => set_desktop_hidden(enabled),
+        "darkMode" => set_dark_mode(enabled),
+        "airpods" => set_audio_device_connected(enabled),
+        "hideDock" => set_dock_hidden(enabled),
+        "hideWidgets" => set_widgets_hidden(enabled),
+        "stageManager" => set_stage_manager(enabled),
+        "muteMic" => set_microphone_muted(enabled, state),
+        "music" => set_music_playing(enabled, state),
+        "spotify" => set_spotify_playing(enabled, state),
+        "hiddenFiles" => set_hidden_files_visible(enabled),
+        "cleanScreen" => set_clean_screen(enabled),
+        "lockKeyboard" => set_keyboard_locked(enabled),
+        "frontApp" if enabled => run_osascript(
+            "tell application \"System Events\" to key code 48 using {command down}",
+        ),
+        "frontApp" => Ok(()),
+        "xcodeClean" if enabled => clean_xcode_derived_data(),
+        "xcodeClean" => Ok(()),
+        "emptyTrash" if enabled => empty_trash(),
+        "emptyTrash" => Ok(()),
+        "ejectDisk" if enabled => eject_external_disks(),
+        "ejectDisk" => Ok(()),
+        "clipboard" if enabled => run_osascript("set the clipboard to \"\""),
+        "clipboard" => Ok(()),
+        "hideWindow" if enabled => run_osascript(
+            "tell application \"System Events\" to keystroke \"h\" using {command down}",
+        ),
+        "hideWindow" => Ok(()),
+        "screenSaver" if enabled => run_process("/usr/bin/open", &["-a", "ScreenSaverEngine"]),
+        "screenSaver" => Ok(()),
+        "displaySleep" if enabled => run_process("/usr/bin/pmset", &["displaysleepnow"]),
+        "displaySleep" => Ok(()),
+        "lockScreen" if enabled => run_osascript(
+            "tell application \"System Events\" to keystroke \"q\" using {control down, command down}",
+        ),
+        "lockScreen" => Ok(()),
+        _ => Err(format!("{id} is not connected to macOS yet")),
+    };
+
+    operation?;
+    let result_state = match mode {
+        "action" | "settings" => false,
+        _ if id == "cleanScreen" => clean_screen_active(),
+        _ if id == "lockKeyboard" => keyboard_lock_active(),
+        _ if id == "airpods" => native_audio_device_base_snapshot().connected,
+        _ => enabled,
+    };
+    Ok(SwitchResult {
+        state: result_state,
+        state_known: true,
+        mode,
+        message: None,
+    })
+}
+
+#[tauri::command]
+async fn set_switch(
+    id: String,
+    enabled: bool,
+    app: AppHandle,
+) -> Result<SwitchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NativeState>();
+        set_switch_blocking(id, enabled, state.inner())
+    })
+    .await
+    .map_err(|error| format!("The system operation stopped unexpectedly: {error}"))?
+}
+
+fn native_state_values(
+    state: &NativeState,
+    audio_device: &AudioDeviceSnapshot,
+) -> (HashMap<String, bool>, bool, bool) {
+    let mut values = HashMap::new();
+
+    let desktop_visible = read_process(
+        "/usr/bin/defaults",
+        &["read", "com.apple.finder", "CreateDesktop"],
+    )
+    .is_none_or(|value| value != "0" && !value.eq_ignore_ascii_case("false"));
+    values.insert("desktop".into(), !desktop_visible);
+
+    let dark_mode = read_process(
+        "/usr/bin/defaults",
+        &["read", "-g", "AppleInterfaceStyle"],
+    )
+    .is_some_and(|value| value.eq_ignore_ascii_case("dark"));
+    values.insert("darkMode".into(), dark_mode);
+
+    let dock_hidden = read_process(
+        "/usr/bin/defaults",
+        &["read", "com.apple.dock", "autohide"],
+    )
+    .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    values.insert("hideDock".into(), dock_hidden);
+
+    let standard_widgets_hidden =
+        read_window_manager_bool("StandardHideWidgets").unwrap_or(false);
+    let staged_widgets_hidden =
+        read_window_manager_bool("StageManagerHideWidgets").unwrap_or(false);
+    values.insert(
+        "hideWidgets".into(),
+        standard_widgets_hidden && staged_widgets_hidden,
+    );
+
+    let stage_manager =
+        read_window_manager_bool("GloballyEnabled").unwrap_or(false);
+    values.insert("stageManager".into(), stage_manager);
+
+    let current_input_volume = input_volume();
+    values.insert(
+        "muteMic".into(),
+        current_input_volume.is_some_and(|volume| volume == 0),
+    );
+    if let Some(volume) = current_input_volume.filter(|volume| *volume > 0) {
+        if let Ok(mut previous) = state.previous_input_volume.lock() {
+            if previous.as_ref().copied() != Some(volume) {
+                *previous = Some(volume);
+                remember_previous_input_volume(volume);
+            }
+        }
+    }
+
+    let hidden_files = read_process(
+        "/usr/bin/defaults",
+        &["read", "com.apple.finder", "AppleShowAllFiles"],
+    )
+    .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    values.insert("hiddenFiles".into(), hidden_files);
+
+    // Querying Music through AppleScript can block app startup while macOS waits
+    // for Automation permission. Treat the state as unknown until the user has
+    // explicitly operated this switch during the current app session.
+    let music_state = state
+        .music_playing
+        .lock()
+        .ok()
+        .and_then(|playing| *playing);
+    values.insert("music".into(), music_state.unwrap_or(false));
+    let spotify_state = state
+        .spotify_playing
+        .lock()
+        .ok()
+        .and_then(|playing| *playing);
+    values.insert("spotify".into(), spotify_state.unwrap_or(false));
+
+    let awake = state
+        .caffeinate
+        .lock()
+        .map(|process| process.is_some())
+        .unwrap_or(false);
+    values.insert("awake".into(), awake);
+    values.insert("airpods".into(), audio_device.connected);
+    values.insert("cleanScreen".into(), clean_screen_active());
+    values.insert("lockKeyboard".into(), keyboard_lock_active());
+
+    for id in ALL_CONTROL_IDS {
+        values.entry(id.into()).or_insert(false);
+    }
+
+    (values, music_state.is_some(), spotify_state.is_some())
+}
+
+fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
+    let audio_device = native_audio_device_snapshot();
+    let (values, music_state_known, spotify_state_known) =
+        native_state_values(state, &audio_device);
+    let controls = ALL_CONTROL_IDS
+        .into_iter()
+        .map(|id| {
+            let direct = is_direct_system_toggle(id)
+                .then(|| get_direct_system_toggle(id))
+                .transpose();
+            let (available, state_known, state_value, message) = match direct {
+                Ok(Some((feature, message))) => (
+                    feature.available != 0,
+                    feature.state_known != 0,
+                    feature.enabled != 0,
+                    message,
+                ),
+                Err(error) => (false, false, false, Some(error)),
+                Ok(None) => {
+                    let available = match id {
+                        "airpods" => audio_device.paired,
+                        "spotify" => spotify_available(),
+                        _ => true,
+                    };
+                    let message = match id {
+                        "airpods" if !available => {
+                            Some("No paired Bluetooth audio device was found".to_string())
+                        }
+                        "spotify" if !available => {
+                            Some("Spotify is not installed on this Mac".to_string())
+                        }
+                        _ => None,
+                    };
+                    (
+                        available,
+                        snapshot_state_known(id, music_state_known, spotify_state_known),
+                        values.get(id).copied().unwrap_or(false),
+                        message,
+                    )
+                }
+            };
+            (
+                id.to_string(),
+                ControlSnapshot {
+                    state: state_value,
+                    state_known,
+                    available,
+                    mode: control_mode(id),
+                    message,
+                },
+            )
+        })
+        .collect();
+
+    NativeSnapshot {
+        controls,
+        audio_device,
+    }
+}
+
+fn snapshot_state_known(id: &str, music_state_known: bool, spotify_state_known: bool) -> bool {
+    match id {
+        "music" => music_state_known,
+        "spotify" => spotify_state_known,
+        _ => true,
+    }
+}
+
+fn system_settings_url(pane: &str) -> Option<&'static str> {
+    match pane {
+        "accessibility" => Some(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ),
+        "automation" => Some(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        ),
+        "bluetooth" => Some(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth",
+        ),
+        "focus" => Some(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Focus",
+        ),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn open_system_settings(pane: String) -> Result<(), String> {
+    let url = system_settings_url(&pane)
+        .ok_or_else(|| format!("Unknown System Settings destination: {pane}"))?;
+    run_process("/usr/bin/open", &[url])
+}
+
+#[tauri::command]
+async fn get_native_snapshot(app: AppHandle) -> Result<NativeSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NativeState>();
+        build_native_snapshot(state.inner())
+    })
+    .await
+    .map_err(|error| format!("Unable to read the system state: {error}"))
+}
+
+#[tauri::command]
+async fn get_display_configuration() -> Result<DisplayConfiguration, String> {
+    tauri::async_runtime::spawn_blocking(native_display_configuration)
+        .await
+        .map_err(|error| format!("Unable to read display information: {error}"))?
+}
+
+#[tauri::command]
+async fn set_display_mode(
+    display_id: u32,
+    mode_id: i32,
+) -> Result<DisplayConfiguration, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        set_native_display_mode(display_id, mode_id)?;
+        native_display_configuration()
+    })
+    .await
+    .map_err(|error| format!("The display operation stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+fn open_preferences(app: AppHandle) -> Result<(), String> {
+    if let Some(popover) = app.get_webview_window("popover") {
+        let _ = popover.hide();
+    }
+
+    let preferences = app
+        .get_webview_window("preferences")
+        .ok_or_else(|| "Preferences window is unavailable".to_string())?;
+    preferences
+        .set_size(LogicalSize::new(510.0, 540.0))
+        .map_err(|error| error.to_string())?;
+    preferences.center().map_err(|error| error.to_string())?;
+    preferences.show().map_err(|error| error.to_string())?;
+    preferences.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn hide_current_window(window: WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    let _ = set_clean_screen(false);
+    let _ = set_keyboard_locked(false);
+    app.exit(0);
+}
+
+const POPOVER_CHROME_HEIGHT: f64 = 118.0;
+const POPOVER_ROW_HEIGHT: f64 = 55.0;
+const POPOVER_WIDTH: f64 = 360.0;
+
+fn preferred_popover_height(item_count: usize, maximum: f64) -> f64 {
+    let content_height = POPOVER_CHROME_HEIGHT + item_count as f64 * POPOVER_ROW_HEIGHT;
+    content_height.min(maximum.max(POPOVER_CHROME_HEIGHT))
+}
+
+#[tauri::command]
+fn resize_popover(app: AppHandle, item_count: usize) -> Result<(), String> {
+    let window = app
+        .get_webview_window("popover")
+        .ok_or_else(|| "The popover window is unavailable".to_string())?;
+    let maximum = app
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .map(|monitor| monitor.size().height as f64 / monitor.scale_factor() - 54.0)
+        .unwrap_or(820.0);
+    let height = preferred_popover_height(item_count, maximum);
+
+    window
+        .set_size(LogicalSize::new(POPOVER_WIDTH, height))
+        .map_err(|error| error.to_string())?;
+    position_popover(&app, &window, None);
+    Ok(())
+}
+
+fn position_popover(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    anchor_rect: Option<tauri::Rect>,
+) {
+    let Ok(window_size) = window.outer_size() else {
+        return;
+    };
+
+    let tray_rect = anchor_rect
+        .or_else(|| {
+            app.state::<NativeState>()
+                .tray_anchor
+                .lock()
+                .ok()
+                .and_then(|anchor| *anchor)
+        })
+        .or_else(|| {
+            app.tray_by_id("switchboard-tray")
+                .and_then(|tray| tray.rect().ok().flatten())
+        });
+
+    let Some(tray_rect) = tray_rect else {
+        return;
+    };
+
+    let window_scale = window.scale_factor().unwrap_or(1.0);
+    let tray_position = tray_rect.position.to_physical::<f64>(window_scale);
+    let tray_size = tray_rect.size.to_physical::<f64>(window_scale);
+    let tray_center_x = tray_position.x + tray_size.width / 2.0;
+    let tray_center_y = tray_position.y + tray_size.height / 2.0;
+
+    let monitor = app
+        .monitor_from_point(tray_center_x, tray_center_y)
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    let scale_factor = monitor.scale_factor();
+    let work_area = monitor.work_area();
+    let margin = 8.0 * scale_factor;
+    let minimum_x = work_area.position.x as f64 + margin;
+    let maximum_x = work_area.position.x as f64 + work_area.size.width as f64
+        - window_size.width as f64
+        - margin;
+    let centered_x = tray_center_x - window_size.width as f64 / 2.0;
+    let x = centered_x
+        .clamp(minimum_x, maximum_x.max(minimum_x))
+        .round() as i32;
+    let y = (tray_position.y + tray_size.height)
+        .max(work_area.position.y as f64)
+        .round() as i32;
+
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+#[cfg(target_os = "macos")]
+fn show_popover_with_native_animation(window: &WebviewWindow) -> bool {
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if MainThreadMarker::new().is_none() {
+        return false;
+    }
+    let Ok(native_window) = window.ns_window() else {
+        return false;
+    };
+
+    unsafe {
+        let native_window: &NSWindow = &*native_window.cast();
+        let final_frame = native_window.frame();
+        let mut opening_frame = final_frame;
+        opening_frame.origin.y += 5.0;
+        native_window.setFrame_display(opening_frame, true);
+        native_window.makeKeyAndOrderFront(None);
+        native_window.setFrame_display_animate(final_frame, true, true);
+    }
+
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_popover_with_native_animation(_window: &WebviewWindow) -> bool {
+    false
+}
+
+#[tauri::command]
+fn show_popover(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("popover")
+        .ok_or_else(|| "The popover window is unavailable".to_string())?;
+    position_popover(&app, &window, None);
+    if !show_popover_with_native_animation(&window) {
+        window.show().map_err(|error| error.to_string())?;
+    }
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+fn toggle_popover(app: &AppHandle, anchor_rect: tauri::Rect) {
+    let Some(window) = app.get_webview_window("popover") else {
+        return;
+    };
+
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+
+    position_popover(app, &window, Some(anchor_rect));
+    if !show_popover_with_native_animation(&window) {
+        let _ = window.show();
+    }
+    let _ = window.set_focus();
+}
+
+#[cfg(target_os = "macos")]
+fn native_status_anchor(x: f64, y: f64, width: f64, height: f64) -> Rect {
+    // AppKit reports status-item geometry in logical points. Preserve that
+    // coordinate space so position_popover can apply the monitor scale once.
+    Rect {
+        position: LogicalPosition::new(x, y).into(),
+        size: LogicalSize::new(width, height).into(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn native_status_item_clicked(x: f64, y: f64, width: f64, height: f64) {
+    let Some(app) = APP_HANDLE.get() else {
+        return;
+    };
+    let anchor_rect = native_status_anchor(x, y, width, height);
+    if let Ok(mut stored_anchor) = app.state::<NativeState>().tray_anchor.lock() {
+        *stored_anchor = Some(anchor_rect);
+    }
+    toggle_popover(app, anchor_rect);
+}
+
+fn create_windows(app: &tauri::App) -> tauri::Result<()> {
+    let popover = WebviewWindowBuilder::new(
+        app,
+        "popover",
+        WebviewUrl::App("index.html?view=popover".into()),
+    )
+    .title("OneTouch")
+    .inner_size(POPOVER_WIDTH, preferred_popover_height(8, f64::MAX))
+    .min_inner_size(POPOVER_WIDTH, POPOVER_CHROME_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()?;
+    let _surface = configure_popover_surface(&popover)?;
+
+    WebviewWindowBuilder::new(
+        app,
+        "preferences",
+        WebviewUrl::App("index.html?view=preferences".into()),
+    )
+    .title("OneTouch Preferences")
+    .inner_size(510.0, 540.0)
+    .min_inner_size(500.0, 500.0)
+    .resizable(true)
+    .decorations(true)
+    .title_bar_style(TitleBarStyle::Overlay)
+    .hidden_title(true)
+    .transparent(true)
+    .visible(false)
+    .build()?;
+
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(NativeState::default())
+        .invoke_handler(tauri::generate_handler![
+            set_switch,
+            get_native_snapshot,
+            get_display_configuration,
+            set_display_mode,
+            get_external_disks,
+            set_eject_exclusions,
+            open_preferences,
+            hide_current_window,
+            quit_app,
+            resize_popover,
+            show_popover,
+            set_menu_icon,
+            open_system_settings
+        ])
+        .on_tray_icon_event(|app, event| {
+            if let TrayIconEvent::Click {
+                rect,
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_popover(app, rect);
+            }
+        })
+        .setup(|app| {
+            create_windows(app)?;
+
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            #[cfg(target_os = "macos")]
+            {
+                let _ = APP_HANDLE.set(app.handle().clone());
+                let result = unsafe { sb_status_item_create(Some(native_status_item_clicked)) };
+                if result != 0 {
+                    return Err(std::io::Error::other(
+                        "macOS did not create the OneTouch status item",
+                    )
+                    .into());
+                }
+                if unsafe { sb_status_item_is_visible() } == 0 {
+                    return Err(std::io::Error::other(
+                        "macOS created the OneTouch status item but kept it hidden",
+                    )
+                    .into());
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            TrayIconBuilder::with_id("switchboard-tray")
+                .icon(menu_bar_icon("command"))
+                .icon_as_template(false)
+                .show_menu_on_left_click(false)
+                .tooltip("OneTouch")
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            WindowEvent::Focused(false) if window.label() == "popover" => {
+                let _ = window.hide();
+            }
+            _ => {}
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running OneTouch");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{
+        control_mode, external_disk_ids, external_disk_name, find_audio_device_battery,
+        preferred_popover_surface, parse_defaults_bool, run_process_with_timeout, snapshot_state_known,
+        system_settings_url, PopoverSurface,
+    };
+
+    #[test]
+    fn extracts_external_physical_disk_ids() {
+        let output = "/dev/disk4 (external, physical):\n   0: GUID_partition_scheme *2.0 TB disk4\n/dev/disk7 (external, physical):\n";
+        assert_eq!(external_disk_ids(output), vec!["/dev/disk4", "/dev/disk7"]);
+    }
+
+    #[test]
+    fn ignores_empty_disk_output() {
+        assert!(external_disk_ids("No external disks found\n").is_empty());
+    }
+
+    #[test]
+    fn reads_external_disk_media_name() {
+        let output = "   Device Identifier:        disk4\n   Device / Media Name:      Samsung Portable SSD\n";
+        assert_eq!(
+            external_disk_name(output),
+            Some("Samsung Portable SSD".into())
+        );
+    }
+
+    #[test]
+    fn empty_trash_action_is_idempotent_and_race_safe() {
+        assert!(super::EMPTY_TRASH_SCRIPT.contains(
+            "if (count of items of trash) is 0 then return"
+        ));
+        assert!(super::EMPTY_TRASH_SCRIPT.contains(
+            "if (count of items of trash) is not 0 then error"
+        ));
+    }
+
+    #[test]
+    fn parses_bluetooth_headphone_battery_from_system_profiler() {
+        let profile = serde_json::json!({
+            "SPBluetoothDataType": [{
+                "device_connected": [{
+                    "Ryan's AirPods Pro": {
+                        "device_batteryLevelLeft": "91%",
+                        "device_batteryLevelRight": "87%",
+                        "device_batteryLevelCase": "76%"
+                    }
+                }]
+            }]
+        });
+        let battery = find_audio_device_battery(&profile, "Ryan's AirPods Pro").unwrap();
+        assert_eq!(
+            battery,
+            (
+                "Ryan's AirPods Pro".into(),
+                None,
+                Some(91),
+                Some(87),
+                Some(76)
+            )
+        );
+    }
+
+    #[test]
+    fn parses_generic_bluetooth_headphone_battery() {
+        let profile = serde_json::json!({
+            "device_connected": [{
+                "Sony WH-1000XM6": {
+                    "device_minorType": "Headphones",
+                    "device_batteryLevel": "82%"
+                }
+            }]
+        });
+        let battery = find_audio_device_battery(&profile, "Sony WH-1000XM6").unwrap();
+        assert_eq!(battery, ("Sony WH-1000XM6".into(), Some(82), None, None, None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_bluetooth_audio_snapshot_without_changing_connection() {
+        let snapshot = super::native_audio_device_snapshot();
+        assert!(!snapshot.name.trim().is_empty());
+        if snapshot.connected {
+            assert!(snapshot.paired);
+        }
+    }
+
+    #[test]
+    fn classifies_direct_system_controls_as_toggles() {
+        for id in ["dnd", "nightShift", "trueTone", "lowPower", "highPower"] {
+            assert_eq!(control_mode(id), "toggle");
+            assert!(super::is_direct_system_toggle(id));
+        }
+        assert_eq!(control_mode("airpods"), "toggle");
+        assert_eq!(control_mode("cleanScreen"), "toggle");
+    }
+
+    #[test]
+    fn parses_window_manager_boolean_preferences() {
+        assert_eq!(parse_defaults_bool("1"), Some(true));
+        assert_eq!(parse_defaults_bool("true"), Some(true));
+        assert_eq!(parse_defaults_bool("0"), Some(false));
+        assert_eq!(parse_defaults_bool("FALSE"), Some(false));
+        assert_eq!(parse_defaults_bool("unexpected"), None);
+    }
+
+    #[test]
+    fn distinguishes_actions_from_settings_destinations() {
+        assert_eq!(control_mode("screenSaver"), "action");
+        assert_eq!(control_mode("emptyTrash"), "action");
+        assert_eq!(control_mode("resolution"), "choice");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_active_display_modes_without_changing_them() {
+        let configuration = super::native_display_configuration()
+            .expect("active display configuration should be readable");
+        assert!(!configuration.displays.is_empty());
+        for display in configuration.displays {
+            assert!(!display.name.is_empty());
+            assert!(!display.modes.is_empty());
+            assert!(display.current_width > 0);
+            assert!(display.current_height > 0);
+            assert!(display.modes.iter().any(|mode| mode.current));
+        }
+    }
+
+    #[test]
+    fn keeps_music_neutral_until_the_session_knows_its_state() {
+        assert!(!snapshot_state_known("music", false, false));
+        assert!(snapshot_state_known("music", true, false));
+        assert!(!snapshot_state_known("spotify", true, false));
+        assert!(snapshot_state_known("spotify", false, true));
+        assert!(snapshot_state_known("darkMode", false, false));
+    }
+
+    #[test]
+    fn rejects_unknown_system_settings_destinations() {
+        assert!(system_settings_url("accessibility").is_some());
+        assert!(system_settings_url("automation").is_some());
+        assert!(system_settings_url("unknown").is_none());
+    }
+
+    #[test]
+    fn sizes_popover_to_visible_control_count() {
+        assert_eq!(super::preferred_popover_height(0, 820.0), 118.0);
+        assert_eq!(super::preferred_popover_height(8, 820.0), 558.0);
+        assert_eq!(super::preferred_popover_height(9, 820.0), 613.0);
+        assert_eq!(super::preferred_popover_height(24, 820.0), 820.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scales_native_status_anchor_from_appkit_points_once() {
+        let anchor = super::native_status_anchor(868.0, 0.0, 22.0, 24.0);
+        let position = anchor.position.to_physical::<f64>(2.0);
+        let size = anchor.size.to_physical::<f64>(2.0);
+
+        assert_eq!((position.x, position.y), (1736.0, 0.0));
+        assert_eq!((size.width, size.height), (44.0, 48.0));
+    }
+
+    #[test]
+    fn selects_liquid_glass_only_when_the_runtime_supports_it() {
+        assert_eq!(
+            preferred_popover_surface(true),
+            PopoverSurface::LiquidGlass
+        );
+        assert_eq!(
+            preferred_popover_surface(false),
+            PopoverSurface::VibrancyFallback
+        );
+    }
+
+    #[test]
+    fn stops_a_process_after_its_timeout() {
+        let started = Instant::now();
+        let result = run_process_with_timeout(
+            "/bin/sh",
+            &["-c", "sleep 1"],
+            Duration::from_millis(50),
+        );
+
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "temporarily changes and then restores real macOS display settings"]
+    fn round_trips_private_display_toggles() {
+        for id in ["nightShift", "trueTone"] {
+            eprintln!("reading {id}");
+            let (before, _) = super::get_direct_system_toggle(id)
+                .unwrap_or_else(|error| panic!("could not read {id}: {error}"));
+            if before.available == 0 {
+                continue;
+            }
+
+            let requested = before.enabled == 0;
+            eprintln!("changing {id} to {requested}");
+            let change = super::set_direct_system_toggle(id, requested);
+            eprintln!("verifying {id}");
+            let observed = super::get_direct_system_toggle(id);
+            eprintln!("restoring {id} to {}", before.enabled != 0);
+            let restore = super::set_direct_system_toggle(id, before.enabled != 0);
+
+            let changed = change.unwrap_or_else(|error| panic!("could not change {id}: {error}"));
+            let (after, _) = observed.unwrap_or_else(|error| panic!("could not verify {id}: {error}"));
+            restore.unwrap_or_else(|error| panic!("could not restore {id}: {error}"));
+            assert_eq!(changed.enabled != 0, requested, "{id} setter result");
+            assert_eq!(after.enabled != 0, requested, "{id} read-back result");
+        }
+    }
+}

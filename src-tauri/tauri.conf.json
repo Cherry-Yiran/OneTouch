@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OneTouch",
+  "version": "0.1.0",
+  "identifier": "design.ryan.switchboard.menubar.v2",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "trayIcon": null,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Utility",
+    "shortDescription": "A quiet macOS menu bar control desk",
+    "longDescription": "OneTouch collects everyday macOS controls into one focused menu bar utility.",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "Switchboard Local Code Signing"
+    }
+  }
+}

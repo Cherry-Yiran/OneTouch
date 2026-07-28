@@ -1,0 +1,24 @@
+# JavaScript
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Local test and editor state
+.playwright-cli/
+audit/
+output/
+.DS_Store
+.idea/
+.vscode/
+
+# Local environment and signing configuration
+.env
+.env.*
+!.env.example
+*.p12
+*.pem
+*.key
