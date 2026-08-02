@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::{CStr, CString},
     env, fs,
     io::Read,
@@ -197,6 +197,28 @@ struct ExternalDisk {
     id: String,
     name: String,
     excluded: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DiskutilVolumeInfo {
+    #[serde(rename = "DeviceIdentifier")]
+    device_identifier: Option<String>,
+    #[serde(rename = "ParentWholeDisk")]
+    parent_whole_disk: Option<String>,
+    #[serde(rename = "VolumeName")]
+    volume_name: Option<String>,
+    #[serde(rename = "MountPoint")]
+    mount_point: Option<String>,
+    #[serde(rename = "Ejectable", default)]
+    ejectable: bool,
+    #[serde(rename = "Internal", default)]
+    internal: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EjectableDiskCandidate {
+    id: String,
+    name: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1183,48 +1205,101 @@ fn empty_trash_result_message(already_empty: bool) -> Option<String> {
     already_empty.then(|| "trash-already-empty".to_string())
 }
 
-fn external_disk_ids(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .map(|value| value.trim_end_matches(':'))
-        .filter(|value| value.starts_with("/dev/disk"))
-        .map(str::to_string)
+fn normalise_disk_device(identifier: &str) -> String {
+    if identifier.starts_with("/dev/") {
+        identifier.to_string()
+    } else {
+        format!("/dev/{identifier}")
+    }
+}
+
+fn ejectable_disk_candidates_from_infos(
+    infos: impl IntoIterator<Item = DiskutilVolumeInfo>,
+) -> Vec<EjectableDiskCandidate> {
+    let mut grouped = BTreeMap::<String, Vec<String>>::new();
+
+    for info in infos {
+        let Some(mount_point) = info.mount_point.filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if info.internal
+            || !info.ejectable
+            || !Path::new(&mount_point).starts_with("/Volumes")
+        {
+            continue;
+        }
+
+        let Some(identifier) = info
+            .parent_whole_disk
+            .or(info.device_identifier)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let name = info
+            .volume_name
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                Path::new(&mount_point)
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| identifier.clone());
+        grouped
+            .entry(normalise_disk_device(&identifier))
+            .or_default()
+            .push(name);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(id, mut names)| {
+            names.sort();
+            names.dedup();
+            EjectableDiskCandidate {
+                id,
+                name: names.join(" · "),
+            }
+        })
         .collect()
 }
 
-fn external_disk_name(output: &str) -> Option<String> {
-    ["Device / Media Name:", "Media Name:", "Volume Name:"]
-        .into_iter()
-        .find_map(|label| {
-            output.lines().find_map(|line| {
-                let (key, value) = line.split_once(':')?;
-                (key.trim() == label.trim_end_matches(':'))
-                    .then(|| value.trim().to_string())
-                    .filter(|value| !value.is_empty() && value != "Not applicable")
-            })
-        })
-}
+fn ejectable_disk_list() -> Result<Vec<EjectableDiskCandidate>, String> {
+    let entries = fs::read_dir("/Volumes")
+        .map_err(|error| format!("Unable to inspect mounted volumes: {error}"))?;
+    let mut infos = Vec::new();
 
-fn external_disk_list() -> Result<Vec<String>, String> {
-    let output = Command::new("/usr/sbin/diskutil")
-        .args(["list", "external", "physical"])
-        .output()
-        .map_err(|error| format!("Unable to inspect external disks: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("Unable to inspect a mounted volume: {error}"))?
+            .path();
+        let output = Command::new("/usr/sbin/diskutil")
+            .args(["info", "-plist"])
+            .arg(&path)
+            .output()
+            .map_err(|error| format!("Unable to inspect mounted volume: {error}"))?;
+        // Network shares and special mount points may not be managed by
+        // diskutil. Ignore only those entries; a malformed plist is a real
+        // detection failure and should remain visible to the user.
+        if !output.status.success() {
+            continue;
+        }
+        let info = plist::from_bytes::<DiskutilVolumeInfo>(&output.stdout)
+            .map_err(|error| format!("Unable to read mounted volume details: {error}"))?;
+        infos.push(info);
     }
-    Ok(external_disk_ids(&String::from_utf8_lossy(&output.stdout)))
+
+    Ok(ejectable_disk_candidates_from_infos(infos))
 }
 
 fn external_disk_control_status(
-    disks: &Result<Vec<String>, String>,
+    disks: &Result<Vec<EjectableDiskCandidate>, String>,
 ) -> (bool, Option<String>) {
     match disks {
         Ok(disks) if !disks.is_empty() => (true, None),
         Ok(_) => (
             false,
-            Some("No external disks are connected".to_string()),
+            Some("No ejectable volumes are mounted".to_string()),
         ),
         Err(error) => (false, Some(error.clone())),
     }
@@ -1258,20 +1333,13 @@ fn save_eject_exclusions(exclusions: &[String]) -> Result<(), String> {
 
 fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
     let exclusions = saved_eject_exclusions();
-    Ok(external_disk_list()?
+    Ok(ejectable_disk_list()?
         .into_iter()
-        .map(|id| {
-            let name = read_process_with_timeout(
-                "/usr/sbin/diskutil",
-                &["info", &id],
-                Duration::from_secs(2),
-            )
-            .and_then(|details| external_disk_name(&details))
-            .unwrap_or_else(|| id.clone());
+        .map(|disk| {
             ExternalDisk {
-                excluded: exclusions.contains(&name),
-                id,
-                name,
+                excluded: exclusions.contains(&disk.name),
+                id: disk.id,
+                name: disk.name,
             }
         })
         .collect())
@@ -1280,7 +1348,7 @@ fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
 fn eject_external_disks() -> Result<(), String> {
     let disks = external_disk_inventory()?;
     if disks.is_empty() {
-        return Err("No external disks are connected".to_string());
+        return Err("No ejectable volumes are mounted".to_string());
     }
 
     for disk in disks.into_iter().filter(|disk| !disk.excluded) {
@@ -1505,7 +1573,7 @@ fn native_state_values(
 
 fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
     let audio_device = native_audio_device_snapshot();
-    let external_disks = external_disk_list();
+    let external_disks = ejectable_disk_list();
     let (external_disks_available, external_disks_message) =
         external_disk_control_status(&external_disks);
     let (values, music_state_known, spotify_state_known) =
@@ -1691,9 +1759,11 @@ fn quit_app(app: AppHandle) {
 const POPOVER_CHROME_HEIGHT: f64 = 118.0;
 const POPOVER_ROW_HEIGHT: f64 = 55.0;
 const POPOVER_WIDTH: f64 = 360.0;
+const POPOVER_VISIBLE_ROW_CAP: usize = 8;
 
 fn preferred_popover_height(item_count: usize, maximum: f64) -> f64 {
-    let content_height = POPOVER_CHROME_HEIGHT + item_count as f64 * POPOVER_ROW_HEIGHT;
+    let visible_rows = item_count.min(POPOVER_VISIBLE_ROW_CAP);
+    let content_height = POPOVER_CHROME_HEIGHT + visible_rows as f64 * POPOVER_ROW_HEIGHT;
     content_height.min(maximum.max(POPOVER_CHROME_HEIGHT))
 }
 
@@ -2215,43 +2285,108 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        control_mode, external_disk_control_status, external_disk_ids, external_disk_name,
+        control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
         find_audio_device_battery, parse_defaults_bool, run_process_with_timeout,
-        snapshot_state_known, system_settings_url, timer_menu_choice,
+        snapshot_state_known, system_settings_url, timer_menu_choice, DiskutilVolumeInfo,
+        EjectableDiskCandidate,
     };
 
     #[test]
-    fn extracts_external_physical_disk_ids() {
-        let output = "/dev/disk4 (external, physical):\n   0: GUID_partition_scheme *2.0 TB disk4\n/dev/disk7 (external, physical):\n";
-        assert_eq!(external_disk_ids(output), vec!["/dev/disk4", "/dev/disk7"]);
+    fn detects_ejectable_images_and_disks_but_excludes_system_volumes() {
+        let infos = vec![
+            DiskutilVolumeInfo {
+                device_identifier: Some("disk5s1".into()),
+                parent_whole_disk: Some("disk5".into()),
+                volume_name: Some("AgentIsland 1.6.1".into()),
+                mount_point: Some("/Volumes/AgentIsland 1.6.1".into()),
+                ejectable: true,
+                internal: false,
+            },
+            DiskutilVolumeInfo {
+                device_identifier: Some("disk6s1".into()),
+                parent_whole_disk: Some("disk6".into()),
+                volume_name: Some("Cindy Installer".into()),
+                mount_point: Some("/Volumes/Cindy Installer".into()),
+                ejectable: true,
+                internal: false,
+            },
+            DiskutilVolumeInfo {
+                device_identifier: Some("disk3s1s1".into()),
+                parent_whole_disk: Some("disk3".into()),
+                volume_name: Some("Macintosh HD".into()),
+                mount_point: Some("/".into()),
+                ejectable: false,
+                internal: true,
+            },
+        ];
+
+        assert_eq!(
+            ejectable_disk_candidates_from_infos(infos),
+            vec![
+                EjectableDiskCandidate {
+                    id: "/dev/disk5".into(),
+                    name: "AgentIsland 1.6.1".into(),
+                },
+                EjectableDiskCandidate {
+                    id: "/dev/disk6".into(),
+                    name: "Cindy Installer".into(),
+                },
+            ]
+        );
     }
 
     #[test]
-    fn ignores_empty_disk_output() {
-        assert!(external_disk_ids("No external disks found\n").is_empty());
+    fn groups_multiple_volumes_on_the_same_ejectable_device() {
+        let infos = ["Work", "Archive"].map(|name| DiskutilVolumeInfo {
+            device_identifier: Some(format!("disk7s{name}")),
+            parent_whole_disk: Some("disk7".into()),
+            volume_name: Some(name.into()),
+            mount_point: Some(format!("/Volumes/{name}")),
+            ejectable: true,
+            internal: false,
+        });
+        assert_eq!(
+            ejectable_disk_candidates_from_infos(infos),
+            vec![EjectableDiskCandidate {
+                id: "/dev/disk7".into(),
+                name: "Archive · Work".into(),
+            }]
+        );
     }
 
     #[test]
-    fn disables_eject_when_no_external_disk_is_connected() {
+    fn parses_the_system_ejectable_volume_properties() {
+        let plist = br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>DeviceIdentifier</key><string>disk6s1</string>
+<key>ParentWholeDisk</key><string>disk6</string>
+<key>VolumeName</key><string>Cindy Installer</string>
+<key>MountPoint</key><string>/Volumes/Cindy Installer</string>
+<key>Ejectable</key><true/>
+<key>Internal</key><false/>
+</dict></plist>"#;
+        let info = plist::from_bytes::<DiskutilVolumeInfo>(plist).unwrap();
+        assert_eq!(info.parent_whole_disk.as_deref(), Some("disk6"));
+        assert!(info.ejectable);
+        assert!(!info.internal);
+    }
+
+    #[test]
+    fn disables_eject_when_no_ejectable_volume_is_mounted() {
         assert_eq!(
             external_disk_control_status(&Ok(Vec::new())),
             (
                 false,
-                Some("No external disks are connected".to_string())
+                Some("No ejectable volumes are mounted".to_string())
             )
         );
         assert_eq!(
-            external_disk_control_status(&Ok(vec!["/dev/disk4".to_string()])),
+            external_disk_control_status(&Ok(vec![EjectableDiskCandidate {
+                id: "/dev/disk4".into(),
+                name: "External SSD".into(),
+            }])),
             (true, None)
-        );
-    }
-
-    #[test]
-    fn reads_external_disk_media_name() {
-        let output = "   Device Identifier:        disk4\n   Device / Media Name:      Samsung Portable SSD\n";
-        assert_eq!(
-            external_disk_name(output),
-            Some("Samsung Portable SSD".into())
         );
     }
 
@@ -2304,6 +2439,10 @@ mod tests {
         assert!(helper.contains("initWithString:@\"P\""));
         assert!(helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
         assert!(helper.contains("@interface SBPassthroughImageView"));
+        assert!(helper.contains("SBStatusIconView.contentTintColor = nil"));
+        assert!(!helper.contains(
+            "SBStatusIconView.contentTintColor = NSColor.whiteColor"
+        ));
         assert!(!helper.contains("_setDropPriority:"));
         assert!(!helper.contains("SBStatusItem.visible = YES"));
         assert!(helper.contains("disableAutomaticTermination"));
@@ -2361,7 +2500,13 @@ mod tests {
         assert!(!helper.contains("SBSeparator"));
         assert!(helper.contains("separator.boxType = NSBoxSeparator"));
         assert!(helper.contains("2.0 * SBNativeSeparatorHeight"));
-        assert!(helper.contains("rows.count * SBNativeRowHeight"));
+        assert!(helper.contains("visibleRows * SBNativeRowHeight"));
+        assert!(helper.contains("NSScrollView *scroll = [NSScrollView new]"));
+        assert!(helper.contains("rows.count > SBNativeVisibleRowCapacity"));
+        assert!(helper.contains(
+            "initWithFrame:NSMakeRect(0.0, 0.0, SBNativePopoverWidth"
+        ));
+        assert!(!helper.contains("document.autoresizingMask"));
         assert!(helper.contains("NSGlassEffectView *glass"));
         assert!(!helper.contains("NSAppearanceNameDarkAqua"));
         assert!(!helper.contains("[NSColor colorWithWhite:0.02 alpha:0.30]"));
@@ -2392,11 +2537,11 @@ mod tests {
         ));
         assert!(helper.contains("SBHideNativePopover"));
         assert!(helper.contains("SBRestorePreviousApplicationAfterPopover"));
-        assert!(helper.contains("stack.alignment = NSLayoutAttributeLeading"));
+        assert!(helper.contains("rowStack.alignment = NSLayoutAttributeLeading"));
         assert!(helper.contains(
-            "view.widthAnchor constraintEqualToAnchor:stack.widthAnchor"
+            "view.widthAnchor constraintEqualToAnchor:rowStack.widthAnchor"
         ));
-        assert!(!helper.contains("stack.alignment = NSLayoutAttributeWidth"));
+        assert!(!helper.contains("rowStack.alignment = NSLayoutAttributeWidth"));
         assert!(helper.contains("SBNativeControlColumnWidth = 64.0"));
         assert!(helper.contains(
             "copy.trailingAnchor constraintLessThanOrEqualToAnchor:controlColumn.leadingAnchor"
@@ -2525,7 +2670,10 @@ mod tests {
         assert!(helper.contains("NSGridView"));
         assert!(helper.contains("NSSearchField"));
         assert!(helper.contains("NSTableViewStyleInset"));
-        assert!(helper.contains("toggle.controlSize = NSControlSizeMini"));
+        assert!(helper.contains("[NSButton checkboxWithTitle:@\"\""));
+        assert!(helper.contains("checkbox.controlSize = NSControlSizeSmall"));
+        assert!(helper.contains("visibilityChanged:(NSButton *)sender"));
+        assert!(!helper.contains("toggle.controlSize = NSControlSizeMini"));
         assert!(helper.contains("NSApplication.sharedApplication.applicationIconImage"));
         assert!(helper.contains("self.loginSwitch = [NSSwitch new]"));
         assert!(helper.contains("self.customTable = [self newPreferencesTable]"));
@@ -2669,8 +2817,8 @@ mod tests {
     fn sizes_popover_to_visible_control_count() {
         assert_eq!(super::preferred_popover_height(0, 820.0), 118.0);
         assert_eq!(super::preferred_popover_height(8, 820.0), 558.0);
-        assert_eq!(super::preferred_popover_height(9, 820.0), 613.0);
-        assert_eq!(super::preferred_popover_height(24, 820.0), 820.0);
+        assert_eq!(super::preferred_popover_height(9, 820.0), 558.0);
+        assert_eq!(super::preferred_popover_height(24, 820.0), 558.0);
     }
 
     #[cfg(target_os = "macos")]

@@ -21,12 +21,19 @@ test('native popover clips the shell and content to one shared radius', () => {
   );
 });
 
-test('native main popover uses AppKit separators only at group boundaries', () => {
+test('native main popover keeps fixed chrome around a native scrolling row list', () => {
   assert.match(macosHelper, /separator\.boxType = NSBoxSeparator/);
+  assert.match(macosHelper, /NSScrollView \*scroll = \[NSScrollView new\]/);
+  assert.match(macosHelper, /scroll\.documentView = document/);
+  assert.match(macosHelper, /rows\.count > SBNativeVisibleRowCapacity/);
+  assert.match(macosHelper, /NSUInteger visibleRows = MIN\(rows\.count, SBNativeVisibleRowCapacity\)/);
   assert.match(
     macosHelper,
-    /\[self headerView:model\], \[self groupSeparatorView\][\s\S]*for \(NSDictionary \*row in rows\)[\s\S]*\[views addObject:\[self groupSeparatorView\]\][\s\S]*\[self footerView:model\]/,
+    /initWithFrame:NSMakeRect\(0\.0, 0\.0, SBNativePopoverWidth,[\s\S]*?rows\.count \* SBNativeRowHeight\)/,
   );
+  assert.doesNotMatch(macosHelper, /document\.autoresizingMask/);
+  assert.match(macosHelper, /header\.topAnchor constraintEqualToAnchor:rootView\.topAnchor/);
+  assert.match(macosHelper, /footer\.bottomAnchor constraintEqualToAnchor:rootView\.bottomAnchor/);
   assert.match(
     macosHelper,
     /2\.0 \* SBNativeSeparatorHeight/,

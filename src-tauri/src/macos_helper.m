@@ -91,6 +91,9 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @interface SBNativePopoverPanelWindow : NSPanel
 @end
 
+@interface SBNativeRowsDocumentView : NSView
+@end
+
 @interface SBNativePopoverController : NSViewController
 @property(nonatomic, strong) NSDictionary *model;
 @property(nonatomic, strong) NSMutableArray<SBNativeControlTarget *> *controlTargets;
@@ -215,8 +218,9 @@ static void SBUpdateStatusImage(void) {
     // macOS 26 can park a newly created image-only status item in a screen-edge
     // holding window even though NSStatusItem.isVisible remains YES. A real
     // (but visually transparent) text title keeps the item in the menu bar.
-    // Draw the authored icon in a pass-through overlay so the user still sees
-    // only the white switch and the whole 24 pt button remains clickable.
+    // Draw the authored template icon in a pass-through overlay so AppKit can
+    // apply the menu bar's current appearance while the whole 24 pt button
+    // remains clickable.
     button.image = nil;
     button.imagePosition = NSNoImage;
     button.attributedTitle = [[NSAttributedString alloc]
@@ -239,7 +243,9 @@ static void SBUpdateStatusImage(void) {
         ]];
     }
     SBStatusIconView.image = SBSingleSwitchTemplate(16.0);
-    SBStatusIconView.contentTintColor = NSColor.whiteColor;
+    // Keep the standard AppKit rendering pipeline. A nil content tint lets the
+    // template image follow the menu bar's light/dark and accessibility state.
+    SBStatusIconView.contentTintColor = nil;
     button.accessibilityLabel = @"OneTouch";
 }
 
@@ -337,6 +343,7 @@ static const CGFloat SBNativeHeaderHeight = 58.0;
 static const CGFloat SBNativeRowHeight = 55.0;
 static const CGFloat SBNativeFooterHeight = 58.0;
 static const CGFloat SBNativeSeparatorHeight = 1.0;
+static const NSUInteger SBNativeVisibleRowCapacity = 8;
 static const CGFloat SBNativeSideInset = 16.0;
 static const CGFloat SBNativeControlColumnWidth = 64.0;
 static const CGFloat SBNativeFooterIconButtonWidth = 44.0;
@@ -439,6 +446,12 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 }
 @end
 
+@implementation SBNativeRowsDocumentView
+- (BOOL)isFlipped {
+    return YES;
+}
+@end
+
 @implementation SBNativePopoverController
 - (instancetype)init {
     self = [super init];
@@ -480,7 +493,9 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSImageView *mark = [[NSImageView alloc] initWithFrame:NSZeroRect];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
     mark.image = SBSingleSwitchTemplate(20.0);
-    mark.contentTintColor = NSColor.whiteColor;
+    // Leave template rendering untinted so AppKit keeps the brand mark
+    // legible across light, dark, glass, and accessibility appearances.
+    mark.contentTintColor = nil;
     mark.imageScaling = NSImageScaleProportionallyDown;
     [header addSubview:mark];
 
@@ -795,24 +810,48 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     [self.rowBindings removeAllObjects];
 
     BOOL useChinese = [model[@"language"] isEqualToString:@"zh"];
-    NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObjects:
-        [self headerView:model], [self groupSeparatorView], nil];
+    NSMutableArray<NSView *> *rowViews = [NSMutableArray arrayWithCapacity:rows.count];
     for (NSDictionary *row in rows) {
-        [views addObject:[self rowView:row useChinese:useChinese]];
+        [rowViews addObject:[self rowView:row useChinese:useChinese]];
     }
-    [views addObject:[self groupSeparatorView]];
-    [views addObject:[self footerView:model]];
 
-    NSStackView *stack = [NSStackView stackViewWithViews:views];
-    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-    // Use a valid leading alignment and explicitly pin every arranged view to
-    // the stack width so rows and AppKit's two group separators stay aligned.
-    stack.alignment = NSLayoutAttributeLeading;
-    stack.spacing = 0.0;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    for (NSView *view in views) {
+    NSStackView *rowStack = [NSStackView stackViewWithViews:rowViews];
+    rowStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    rowStack.alignment = NSLayoutAttributeLeading;
+    rowStack.spacing = 0.0;
+    rowStack.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSView *view in rowViews) {
         view.translatesAutoresizingMaskIntoConstraints = NO;
-        [view.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+        [view.widthAnchor constraintEqualToAnchor:rowStack.widthAnchor].active = YES;
+    }
+
+    SBNativeRowsDocumentView *document = [[SBNativeRowsDocumentView alloc]
+        initWithFrame:NSMakeRect(0.0, 0.0, SBNativePopoverWidth,
+                                 rows.count * SBNativeRowHeight)];
+    [document addSubview:rowStack];
+    [NSLayoutConstraint activateConstraints:@[
+        [rowStack.leadingAnchor constraintEqualToAnchor:document.leadingAnchor],
+        [rowStack.trailingAnchor constraintEqualToAnchor:document.trailingAnchor],
+        [rowStack.topAnchor constraintEqualToAnchor:document.topAnchor],
+        [rowStack.bottomAnchor constraintEqualToAnchor:document.bottomAnchor],
+    ]];
+
+    NSScrollView *scroll = [NSScrollView new];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.drawsBackground = NO;
+    scroll.borderType = NSNoBorder;
+    scroll.hasHorizontalScroller = NO;
+    scroll.hasVerticalScroller = rows.count > SBNativeVisibleRowCapacity;
+    scroll.autohidesScrollers = YES;
+    scroll.verticalScrollElasticity = NSScrollElasticityAutomatic;
+    scroll.documentView = document;
+
+    NSView *header = [self headerView:model];
+    NSView *topSeparator = [self groupSeparatorView];
+    NSView *bottomSeparator = [self groupSeparatorView];
+    NSView *footer = [self footerView:model];
+    for (NSView *view in @[header, topSeparator, bottomSeparator, footer]) {
+        view.translatesAutoresizingMaskIntoConstraints = NO;
     }
     // Replace the tree only when the row structure changes (for example,
     // customisation or language). State-only updates returned above and keep
@@ -820,13 +859,32 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     for (NSView *subview in rootView.subviews.copy) {
         [subview removeFromSuperview];
     }
-    [rootView addSubview:stack];
+    for (NSView *view in @[header, topSeparator, scroll, bottomSeparator, footer]) {
+        [rootView addSubview:view];
+    }
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
-        [stack.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:rootView.topAnchor],
-        [stack.bottomAnchor constraintEqualToAnchor:rootView.bottomAnchor],
+        [header.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+        [header.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+        [header.topAnchor constraintEqualToAnchor:rootView.topAnchor],
+        [topSeparator.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+        [topSeparator.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+        [topSeparator.topAnchor constraintEqualToAnchor:header.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+        [scroll.topAnchor constraintEqualToAnchor:topSeparator.bottomAnchor],
+        [bottomSeparator.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+        [bottomSeparator.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+        [bottomSeparator.topAnchor constraintEqualToAnchor:scroll.bottomAnchor],
+        [footer.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+        [footer.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+        [footer.topAnchor constraintEqualToAnchor:bottomSeparator.bottomAnchor],
+        [footer.bottomAnchor constraintEqualToAnchor:rootView.bottomAnchor],
     ]];
+
+    // The panel is intentionally non-resizable, so keep the document at the
+    // same fixed width as the panel. Width autoresizing must not be enabled
+    // here: NSScrollView installs the document while its own frame is still
+    // zero and would collapse the row width, clipping every trailing switch.
 
     self.layoutSignature = nextSignature;
 }
@@ -1253,10 +1311,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 }
 
 - (void)updateVisibleCount {
-    NSInteger maximum = [self.model[@"maxVisible"] integerValue] ?: 8;
-    NSString *format = self.strings[@"visibleCount"] ?: @"%ld / %ld";
+    NSString *format = self.strings[@"visibleCount"] ?: @"%ld selected";
     self.visibleCountLabel.stringValue =
-        [NSString stringWithFormat:format, (long)self.visibleCount, (long)maximum];
+        [NSString stringWithFormat:format, (long)self.visibleCount];
 }
 
 - (void)updateGeneralControls {
@@ -1366,19 +1423,16 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     handle.contentTintColor = NSColor.tertiaryLabelColor;
     [cell addSubview:handle];
 
-    NSSwitch *toggle = [NSSwitch new];
-    toggle.translatesAutoresizingMaskIntoConstraints = NO;
-    toggle.controlSize = NSControlSizeMini;
-    toggle.identifier = row[@"id"] ?: @"";
-    toggle.state = [row[@"visible"] boolValue]
+    NSButton *checkbox = [NSButton checkboxWithTitle:@""
+                                              target:self
+                                              action:@selector(visibilityChanged:)];
+    checkbox.translatesAutoresizingMaskIntoConstraints = NO;
+    checkbox.controlSize = NSControlSizeSmall;
+    checkbox.identifier = row[@"id"] ?: @"";
+    checkbox.state = [row[@"visible"] boolValue]
         ? NSControlStateValueOn
         : NSControlStateValueOff;
-    NSInteger maximum = [self.model[@"maxVisible"] integerValue] ?: 8;
-    toggle.enabled = [row[@"visible"] boolValue] || self.visibleCount < maximum;
-    toggle.toolTip = !toggle.enabled ? self.strings[@"selectionFull"] : nil;
-    toggle.target = self;
-    toggle.action = @selector(visibilityChanged:);
-    [cell addSubview:toggle];
+    [cell addSubview:checkbox];
 
     [NSLayoutConstraint activateConstraints:@[
         [icon.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:14.0],
@@ -1386,9 +1440,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:8.0],
         [title.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [title.trailingAnchor constraintLessThanOrEqualToAnchor:handle.leadingAnchor constant:-8.0],
-        [toggle.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14.0],
-        [toggle.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-        [handle.trailingAnchor constraintEqualToAnchor:toggle.leadingAnchor constant:-8.0],
+        [checkbox.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14.0],
+        [checkbox.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [handle.trailingAnchor constraintEqualToAnchor:checkbox.leadingAnchor constant:-8.0],
         [handle.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
     ]];
     return cell;
@@ -1537,15 +1591,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
                                   sender.state == NSControlStateValueOn ? @"1" : @"0");
 }
 
-- (void)visibilityChanged:(NSSwitch *)sender {
+- (void)visibilityChanged:(NSButton *)sender {
     NSString *controlID = sender.identifier ?: @"";
     BOOL requestedVisible = sender.state == NSControlStateValueOn;
-    NSInteger maximum = [self.model[@"maxVisible"] integerValue] ?: 8;
-    if (requestedVisible && self.visibleCount >= maximum) {
-        sender.state = NSControlStateValueOff;
-        NSBeep();
-        return;
-    }
     NSMutableArray<NSDictionary *> *next = [NSMutableArray arrayWithCapacity:self.rows.count];
     for (NSDictionary *row in self.rows) {
         if ([row[@"id"] isEqualToString:controlID]) {
@@ -1780,8 +1828,9 @@ int sb_native_popover_update_json(const char *model_json) {
         NSArray *rows = [model[@"rows"] isKindOfClass:NSArray.class]
             ? model[@"rows"]
             : @[];
+        NSUInteger visibleRows = MIN(rows.count, SBNativeVisibleRowCapacity);
         CGFloat height = SBNativeHeaderHeight +
-                         rows.count * SBNativeRowHeight +
+                         visibleRows * SBNativeRowHeight +
                          SBNativeFooterHeight +
                          2.0 * SBNativeSeparatorHeight;
         NSSize targetSize = NSMakeSize(SBNativePopoverWidth, height);
@@ -1918,7 +1967,6 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
             @"githubURL": @"",
             @"startAtLogin": @NO,
             @"startAtLoginLoading": @YES,
-            @"maxVisible": @8,
             @"rows": @[],
             @"strings": @{
                 @"title": @"OneTouch 设置",
@@ -1930,8 +1978,8 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
                 @"startAtLogin": @"登录时启动",
                 @"startAtLoginNote": @"正在读取登录启动设置…",
                 @"saved": @"更改会自动保存在这台 Mac 上。",
-                @"customiseIntro": @"选择最多八个控制项，并拖动调整顺序。",
-                @"visibleCount": @"%ld / %ld",
+                @"customiseIntro": @"选择要显示的控制项，并拖动调整顺序。",
+                @"visibleCount": @"已选择 %ld",
                 @"searchControls": @"搜索控制项",
                 @"shortcutIntro": @"为任意控制项录制全局快捷键。",
                 @"shortcutRecord": @"录制",

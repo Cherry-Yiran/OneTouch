@@ -34,7 +34,7 @@ import {
   formatShortcut,
   shortcutFromKeyboardEvent,
 } from './shortcutModel.js';
-import { MAX_VISIBLE_CONTROLS, toggleVisibleControl } from './visibility.js';
+import { toggleVisibleControl } from './visibility.js';
 
 const SORT_TRANSITION = {
   duration: 210,
@@ -67,16 +67,14 @@ export const PREFERENCES_COPY = {
     autostartError: 'Could not update the login setting.',
     saved: 'Changes are saved on this Mac.',
     activeMenu: 'Visible in menu',
-    customiseIntro: 'Choose up to eight controls and drag to arrange them.',
-    visibleCount: '%ld / %ld',
+    customiseIntro: 'Choose controls to show and drag to arrange them.',
+    visibleCount: '%ld selected',
     searchControls: 'Search controls',
     detailTitle: 'Control details',
     detailEmpty: 'Select a control to see its status-menu configuration.',
     reorder: 'Drag to reorder',
     enabledNote: 'This control is shown in the status menu.',
     disabledNote: 'This control is hidden until you enable it.',
-    selectionFull: 'Limit reached — deselect one to add another.',
-    limitItem: 'Eight-control limit reached',
     controlToggle: 'Persistent switch',
     controlAction: 'One-time action',
     controlChoice: 'In-app selection',
@@ -109,16 +107,14 @@ export const PREFERENCES_COPY = {
     autostartError: '无法更新登录启动设置。',
     saved: '更改已保存在本机。',
     activeMenu: '菜单中显示',
-    customiseIntro: '选择最多八个控制项，并拖动调整顺序。',
-    visibleCount: '%ld / %ld',
+    customiseIntro: '选择要显示的控制项，并拖动调整顺序。',
+    visibleCount: '已选择 %ld',
     searchControls: '搜索控制项',
     detailTitle: '控制项详情',
     detailEmpty: '选择一个控制项，查看它在状态栏菜单中的显示方式。',
     reorder: '拖动调整顺序',
     enabledNote: '此控制项会显示在状态栏菜单中。',
     disabledNote: '启用后，此控制项才会显示在状态栏菜单中。',
-    selectionFull: '已达上限，取消一项后可继续选择。',
-    limitItem: '已达 8 项上限',
     controlToggle: '持续开关',
     controlAction: '一次性操作',
     controlChoice: '应用内选择',
@@ -271,7 +267,6 @@ function SortableControlRow({
   item,
   title,
   visible,
-  limitLocked,
   copy,
   reducedMotion,
   onVisibilityClick,
@@ -301,7 +296,7 @@ function SortableControlRow({
       role="listitem"
       data-control-id={item.id}
       aria-grabbed={isDragging}
-      className={`custom-row kind-${item.kind} ${isDragging ? 'is-dragging' : ''} ${isSorting ? 'is-sorting' : ''} ${limitLocked ? 'is-limit-locked' : ''}`}
+      className={`custom-row kind-${item.kind} ${isDragging ? 'is-dragging' : ''} ${isSorting ? 'is-sorting' : ''}`}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -310,12 +305,10 @@ function SortableControlRow({
     >
       <button
         type="button"
-        className={`square-check ${visible ? 'is-checked' : ''} ${limitLocked ? 'is-limit-locked' : ''}`}
+        className={`square-check ${visible ? 'is-checked' : ''}`}
         role="checkbox"
         aria-checked={visible}
-        aria-disabled={limitLocked}
-        aria-label={`${title}: ${limitLocked ? copy.limitItem : visible ? copy.enabledNote : copy.disabledNote}`}
-        title={limitLocked ? copy.selectionFull : undefined}
+        aria-label={`${title}: ${visible ? copy.enabledNote : copy.disabledNote}`}
         onClick={(event) => onVisibilityClick(event, item.id)}
       >
         {visible && <Check size={13} />}
@@ -385,8 +378,6 @@ export default function Preferences({
   const draggedTitle = draggedItem ? text[draggedItem.id]?.[0] : '';
   const draggedVisible = draggedItem ? visibleIds.includes(draggedItem.id) : false;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const selectionAtLimit = visibleIds.length >= MAX_VISIBLE_CONTROLS;
-
   const toggleVisible = (id) => {
     setVisibleIds((current) => toggleVisibleControl(current, id));
   };
@@ -561,7 +552,6 @@ export default function Preferences({
                           item={item}
                           title={title}
                           visible={visible}
-                          limitLocked={selectionAtLimit && !visible}
                           copy={copy}
                           reducedMotion={reducedMotion}
                           onVisibilityClick={handleVisibilityClick}

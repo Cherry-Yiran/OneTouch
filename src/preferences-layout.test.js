@@ -53,6 +53,20 @@ test('native settings use compact shared spacing and shortcut controls', () => {
   assert.doesNotMatch(macosHelper, /constraintGreaterThanOrEqualToConstant:92\.0/);
 });
 
+test('native customisation uses checkboxes for multi-selection', () => {
+  const customCell = macosHelper.match(
+    /- \(NSView \*\)customCellForRow:[\s\S]*?\n}\n\n- \(NSView \*\)shortcutCellForRow:/,
+  )?.[0] ?? '';
+
+  assert.match(customCell, /\[NSButton checkboxWithTitle:@""/);
+  assert.match(customCell, /checkbox\.controlSize = NSControlSizeSmall/);
+  assert.doesNotMatch(customCell, /NSSwitch/);
+  assert.match(macosHelper, /visibilityChanged:\(NSButton \*\)sender/);
+  assert.doesNotMatch(macosHelper, /model\[@"maxVisible"\]/);
+  assert.doesNotMatch(app, /maxVisible|MAX_VISIBLE_CONTROLS/);
+  assert.doesNotMatch(preferences, /maxVisible|MAX_VISIBLE_CONTROLS/);
+});
+
 test('native settings use the system preference toolbar with a visible pane title', () => {
   assert.match(macosHelper, /NSWindowToolbarStylePreference/);
   assert.match(macosHelper, /window\.titleVisibility = NSWindowTitleVisible/);
@@ -67,11 +81,12 @@ test('native settings use the system preference toolbar with a visible pane titl
   assert.doesNotMatch(macosHelper, /NSToolbarDisplayModeIconOnly/);
 });
 
-test('brand mark is white while native controls keep the system accent color', () => {
+test('brand mark follows the system appearance while active controls use the accent color', () => {
   assert.match(
     macosHelper,
-    /mark\.image = SBSingleSwitchTemplate\(20\.0\);\s*mark\.contentTintColor = NSColor\.whiteColor/,
+    /mark\.image = SBSingleSwitchTemplate\(20\.0\);[\s\S]*?mark\.contentTintColor = nil/,
   );
+  assert.doesNotMatch(macosHelper, /mark\.contentTintColor = NSColor\.whiteColor/);
   assert.match(macosHelper, /active \? NSColor\.controlAccentColor : NSColor\.secondaryLabelColor/);
 });
 
@@ -79,10 +94,21 @@ test('menu bar icon is fixed to one single-switch template', () => {
   assert.doesNotMatch(macosHelper, /iconPopup|iconChanged:|menuIcon/);
   assert.doesNotMatch(macosHelper, /@"switch\.2"/);
   assert.match(macosHelper, /SBSingleSwitchTemplate\(16\.0\)/);
+  assert.match(macosHelper, /SBStatusIconView\.contentTintColor = nil/);
+  assert.doesNotMatch(
+    macosHelper,
+    /SBStatusIconView\.contentTintColor = NSColor\.whiteColor/,
+  );
   assert.match(macosHelper, /mark\.image = SBSingleSwitchTemplate\(20\.0\)/);
   assert.doesNotMatch(app, /menuIcon|setNativeMenuIcon/);
   assert.doesNotMatch(preferences, /Menu bar icon|菜单栏图标|setMenuIcon/);
   assert.doesNotMatch(nativeBridge, /setNativeMenuIcon|set_menu_icon/);
+});
+
+test('disk copy covers every system-ejectable disk and disk image', () => {
+  assert.match(app, /ejectDisk: \['推出磁盘', '短按全部推出 · 长按保护磁盘'\]/);
+  assert.match(app, /当前没有可推出的磁盘或磁盘映像/);
+  assert.doesNotMatch(app, /当前没有连接外置物理磁盘/);
 });
 
 test('about page keeps the app identity, version, and native GitHub link', () => {
