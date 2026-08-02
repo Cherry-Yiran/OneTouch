@@ -2,6 +2,26 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-08-03
+
+### 新增
+
+- “关于”页面增加 macOS 原生“检查更新…”按钮。
+- 检测到新版本后可直接下载并安装，下载过程中显示真实进度，安装完成后自动重启 OneTouch。
+- 接入 Tauri 官方更新签名验证；应用只接受由 OneTouch 更新私钥签名的安装包。
+- 增加 GitHub Actions 发布流程，版本标签会自动生成 DMG、macOS 更新包、签名文件与 `latest.json`。
+
+### 改进
+
+- GitHub 按钮现在直接打开 OneTouch 项目仓库。
+- 发布构建统一使用可移植的 macOS ad-hoc 签名，避免依赖某一台开发机上的本地证书。
+- 更新私钥保存在本机钥匙串配套文件与 GitHub Secrets 中，不进入开源仓库。
+
+### 修复
+
+- 更新按钮在检查、下载、安装和重启阶段会锁定，避免重复发起并发更新任务。
+- 网络错误或更新源不可用时保留当前版本，并提供可重试状态。
+
 ## [0.2.0] - 2026-08-03
 
 ### 新增
@@ -29,5 +49,6 @@
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
+[0.3.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Cherry-Yiran/OneTouch/releases/tag/v0.1.0

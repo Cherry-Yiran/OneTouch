@@ -30,7 +30,7 @@ test('native settings window follows the selected pane content height', () => {
   );
   assert.match(macosHelper, /SBNativePreferencesGeneralHeight\s*=\s*144\.0/);
   assert.match(macosHelper, /SBNativePreferencesListHeight\s*=\s*420\.0/);
-  assert.match(macosHelper, /SBNativePreferencesAboutHeight\s*=\s*200\.0/);
+  assert.match(macosHelper, /SBNativePreferencesAboutHeight\s*=\s*244\.0/);
   assert.match(
     macosHelper,
     /setSelectedTabViewItemIndex:[\s\S]*resizeWindowForSelectedTabAnimated:YES/,
@@ -111,17 +111,21 @@ test('disk copy covers every system-ejectable disk and disk image', () => {
   assert.doesNotMatch(app, /当前没有连接外置物理磁盘/);
 });
 
-test('about page keeps the app identity, version, and native GitHub link', () => {
+test('about page keeps app identity, updating, and the native GitHub link', () => {
   assert.doesNotMatch(macosHelper, /strings\[@"aboutLead"\]/);
   assert.doesNotMatch(macosHelper, /strings\[@"safety"\]/);
   assert.match(
     macosHelper,
-    /for \(NSView \*view in @\[mark, title, self\.aboutVersion, self\.aboutGitHubButton\]\)/,
+    /for \(NSView \*view in @\[mark, title, self\.aboutVersion, self\.aboutUpdateButton,[\s\S]*self\.aboutUpdateStatus, self\.aboutGitHubButton\]\)/,
   );
+  assert.match(macosHelper, /self\.aboutUpdateButton\.bezelStyle = NSBezelStyleRounded/);
+  assert.match(macosHelper, /SBEmitNativePreferencesAction\(@"appUpdate", @"", request\)/);
   assert.match(macosHelper, /self\.aboutGitHubButton\.bezelStyle = NSBezelStyleAccessoryBarAction/);
   assert.match(macosHelper, /NSWorkspace\.sharedWorkspace openURL:url/);
   assert.match(
     app,
-    /const GITHUB_URL = 'https:\/\/github\.com\/Cherry-Yiran\?tab=repositories'/,
+    /const GITHUB_URL = 'https:\/\/github\.com\/Cherry-Yiran\/OneTouch'/,
   );
+  assert.match(nativeBridge, /@tauri-apps\/plugin-updater/);
+  assert.match(nativeBridge, /@tauri-apps\/plugin-process/);
 });

@@ -141,6 +141,19 @@ export async function getNativeAppVersion() {
   return getVersion();
 }
 
+export async function checkNativeAppUpdate() {
+  if (!isTauri()) return null;
+  const { check } = await import('@tauri-apps/plugin-updater');
+  return check();
+}
+
+export async function relaunchNativeApp() {
+  if (!isTauri()) return false;
+  const { relaunch } = await import('@tauri-apps/plugin-process');
+  await relaunch();
+  return true;
+}
+
 export async function openNativePreferences() {
   if (!isTauri()) return false;
   await invoke('open_preferences');

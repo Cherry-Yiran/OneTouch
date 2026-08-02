@@ -42,6 +42,7 @@ import {
   usesSwitchAffordance,
 } from './controlInteractions.js';
 import {
+  checkNativeAppUpdate,
   getNativeAppVersion,
   getNativeAutostartEnabled,
   getNativeDisplayConfiguration,
@@ -56,6 +57,7 @@ import {
   openNativePreferences,
   openNativeSystemSettings,
   quitNativeApp,
+  relaunchNativeApp,
   resizeNativePopover,
   sendNativeCustomizationToPopover,
   setNativeAutostartEnabled,
@@ -115,7 +117,7 @@ const NON_TOGGLE_CONTROL_IDS = SWITCHES
 const MIN_ACTION_PROGRESS_MS = 650;
 const COMPLETION_FEEDBACK_MS = 1400;
 const SECONDARY_PANEL_EXIT_MS = 100;
-const GITHUB_URL = 'https://github.com/Cherry-Yiran?tab=repositories';
+const GITHUB_URL = 'https://github.com/Cherry-Yiran/OneTouch';
 const TIMER_POPOVER_WIDTH = 178;
 const TIMER_POPOVER_HEIGHT = 220;
 const TIMER_POPOVER_GAP = 6;
@@ -365,6 +367,7 @@ export default function App() {
   const [startAtLoginError, setStartAtLoginError] = useState('');
   const [nativePreferencesMessage, setNativePreferencesMessage] = useState('');
   const [nativePreferencesMessageError, setNativePreferencesMessageError] = useState(false);
+  const [nativeUpdate, setNativeUpdate] = useState({ phase: 'idle', version: '', progress: null });
   const [pendingActionIds, setPendingActionIds] = useState(() => new Set());
   const [completedActionIds, setCompletedActionIds] = useState(() => new Set());
   const [actionResultMessages, setActionResultMessages] = useState({});
@@ -391,6 +394,7 @@ export default function App() {
   const shortcutActionRef = useRef(null);
   const nativePopoverActionRef = useRef(null);
   const nativePreferencesActionRef = useRef(null);
+  const pendingNativeUpdateRef = useRef(null);
   const timerRearmAttemptedRef = useRef(new Set());
   const secondaryCloseTimerRef = useRef(null);
   const secondaryClosingRef = useRef(null);
@@ -1055,6 +1059,50 @@ export default function App() {
       await updateStartAtLogin(payload === '1');
       return;
     }
+    if (action === 'appUpdate') {
+      if (payload === 'install' && pendingNativeUpdateRef.current) {
+        const update = pendingNativeUpdateRef.current;
+        let downloaded = 0;
+        let contentLength = null;
+        setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
+        try {
+          await update.downloadAndInstall((event) => {
+            if (event.event === 'Started') {
+              contentLength = event.data.contentLength || null;
+              setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
+            } else if (event.event === 'Progress') {
+              downloaded += event.data.chunkLength;
+              const progress = contentLength
+                ? Math.min(100, Math.round((downloaded / contentLength) * 100))
+                : null;
+              setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress }));
+            } else if (event.event === 'Finished') {
+              setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
+            }
+          });
+          setNativeUpdate((current) => ({ ...current, phase: 'restarting', progress: 100 }));
+          await relaunchNativeApp();
+        } catch {
+          setNativeUpdate((current) => ({ ...current, phase: 'error', progress: null }));
+        }
+        return;
+      }
+
+      pendingNativeUpdateRef.current = null;
+      setNativeUpdate({ phase: 'checking', version: '', progress: null });
+      try {
+        const update = await checkNativeAppUpdate();
+        if (!update) {
+          setNativeUpdate({ phase: 'upToDate', version: '', progress: null });
+          return;
+        }
+        pendingNativeUpdateRef.current = update;
+        setNativeUpdate({ phase: 'available', version: update.version, progress: null });
+      } catch {
+        setNativeUpdate({ phase: 'error', version: '', progress: null });
+      }
+      return;
+    }
     if (action === 'visibility' && ALL_SWITCH_IDS.includes(controlId)) {
       const requestedVisible = payload === '1';
       setVisibleIds((current) => {
@@ -1271,6 +1319,25 @@ export default function App() {
 
   const nativePreferencesModel = useMemo(() => {
     const copy = PREFERENCES_COPY[language];
+    let updateTitle = copy.checkForUpdates;
+    let updateStatus = '';
+    if (nativeUpdate.phase === 'checking') updateTitle = copy.checkingForUpdates;
+    if (nativeUpdate.phase === 'available') {
+      updateTitle = `${copy.downloadAndInstall} ${nativeUpdate.version}`;
+      updateStatus = copy.updateAvailable.replace('%s', nativeUpdate.version);
+    }
+    if (nativeUpdate.phase === 'downloading') {
+      updateTitle = nativeUpdate.progress == null
+        ? copy.downloadingUpdate
+        : `${copy.downloadingUpdate} ${nativeUpdate.progress}%`;
+    }
+    if (nativeUpdate.phase === 'installing') updateTitle = copy.installingUpdate;
+    if (nativeUpdate.phase === 'restarting') updateTitle = copy.restartingAfterUpdate;
+    if (nativeUpdate.phase === 'upToDate') updateStatus = copy.upToDate;
+    if (nativeUpdate.phase === 'error') {
+      updateTitle = copy.retryUpdate;
+      updateStatus = copy.updateFailed;
+    }
     return {
       language,
       appVersion,
@@ -1280,6 +1347,11 @@ export default function App() {
       startAtLoginError,
       shortcutMessage: nativePreferencesMessage,
       shortcutMessageError: nativePreferencesMessageError,
+      update: {
+        phase: nativeUpdate.phase,
+        title: updateTitle,
+        status: updateStatus,
+      },
       strings: copy,
       rows: orderedIds.map((id) => {
         const item = SWITCHES.find((candidate) => candidate.id === id);
@@ -1301,6 +1373,7 @@ export default function App() {
     language,
     nativePreferencesMessage,
     nativePreferencesMessageError,
+    nativeUpdate,
     orderedIds,
     shortcuts,
     startAtLogin,

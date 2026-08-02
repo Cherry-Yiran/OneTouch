@@ -16,6 +16,7 @@ OneTouch 是一款 macOS 菜单栏快捷控制工具，把常用系统开关集�
 - 推出外置物理磁盘，并支持磁盘保护名单
 - 登录时启动
 - 为任意控制项录制全局快捷键
+- 从“关于”页面检查、下载并安装新版本，完成后自动重启
 
 持续状态和一次性操作都使用系统 `NSSwitch`；一次性操作只在处理期间保持开启，完成后自动关闭。定时控制在点击关闭状态的开关后直接显示 macOS 原生时长菜单。
 
@@ -36,7 +37,7 @@ OneTouch 是一款 macOS 菜单栏快捷控制工具，把常用系统开关集�
 - 主面板品牌开关标志固定使用白色；功能状态、系统开关与设置页原生选中态继续使用系统强调色，不得因品牌标志覆盖整个应用的强调色。
 - 设置窗口四个页面统一使用 400pt 内容宽度，并共用紧凑的 20pt 内容边距与 34pt 列表行高；不得因页面切换改变宽度，也不得重新引入大面积无效左右留白。快捷键录制按钮只保留满足原生标题和点击区域所需的最小宽度，不得拉成长条。
 - 隐藏的按钮不得继续参与布局或占据间距；可选附件只在实际显示时加入原生布局，主按钮始终对齐统一的右侧控制列。
-- “关于”页只保留应用图标、产品名、版本号和一个 GitHub 原生跳转按钮；仓库 URL 未提供时按钮保持禁用，产品介绍、权限说明等非身份信息不得占用该页面。
+- “关于”页只保留应用图标、产品名、版本号、原生更新按钮和 GitHub 原生跳转按钮；产品介绍、权限说明等非身份信息不得占用该页面。
 - 主控制浮窗必须读取 `NSStatusItem.button` 的真实屏幕坐标，以按钮中点为锚点水平居中，并直接贴合菜单栏下沿；不得额外添加间隙，也不得使用右上角、主屏幕中心等猜测坐标。
 - 主控制浮窗不显示箭头，也不得用 CSS、CALayer 或图片伪造尖角、圆角、边框、背景、模糊、阴影和开合动画；这些视觉行为统一使用 `NSPanel`、`NSVisualEffectView` 和 `NSWindowAnimationBehaviorUtilityWindow` 的公开系统能力。
 - 主面板只在“标题与控制列表”“控制列表与底部操作区”两个分组边界使用 AppKit 原生 `NSBoxSeparator`；控制行之间不加分割线，也不得用自绘颜色、CSS 边框或 CALayer 模拟系统分割线。
@@ -93,6 +94,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 构建 macOS 应用：
 
 ```bash
+TAURI_SIGNING_PRIVATE_KEY="$(< /path/to/onetouch.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-key-password" \
 pnpm native:build
 ```
 
@@ -101,6 +104,15 @@ pnpm native:build
 ```text
 src-tauri/target/release/bundle/macos/OneTouch.app
 ```
+
+启用更新产物后，构建还会生成 `OneTouch.app.tar.gz` 和对应的 `.sig`。更新私钥绝不能提交到仓库；公开仓库只保存用于校验更新的公钥。
+
+## 自动更新与发布
+
+- 客户端通过 `https://github.com/Cherry-Yiran/OneTouch/releases/latest/download/latest.json` 查询最新正式版本。
+- 推送 `v*` 版本标签会触发 `.github/workflows/release.yml`，自动创建 GitHub Release 并上传 DMG、更新包、签名和 `latest.json`。
+- `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 只保存在 GitHub Actions Secrets。
+- `0.3.0` 是首个包含更新器的引导版本；从更早版本升级到 `0.3.0` 仍需手动安装一次，之后即可在应用内更新。
 
 ## 使用说明
 
@@ -117,7 +129,7 @@ macOS 只会在具体功能确实需要时请求自动化、辅助功能、蓝�
 
 ## 分发说明
 
-仓库中的 Tauri 配置使用本机开发签名身份。其他开发者构建时可以在 `src-tauri/tauri.conf.json` 中移除或替换 `bundle.macOS.signingIdentity`。正式对外分发仍需要 Apple Developer ID 签名与公证。
+仓库中的公开构建使用 macOS ad-hoc 签名，并通过独立的 Tauri 更新密钥验证自动更新包。正式对外分发仍建议接入 Apple Developer ID 签名与公证；Apple 签名和 Tauri 更新签名是两套独立机制。
 
 ## 技术栈
 

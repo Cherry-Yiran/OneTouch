@@ -118,10 +118,13 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @property(nonatomic, strong) NSTextField *shortcutHint;
 @property(nonatomic, strong) NSTextField *aboutVersion;
 @property(nonatomic, strong) NSButton *aboutGitHubButton;
+@property(nonatomic, strong) NSButton *aboutUpdateButton;
+@property(nonatomic, strong) NSTextField *aboutUpdateStatus;
 @property(nonatomic, strong) id shortcutMonitor;
 @property(nonatomic, copy) NSString *recordingShortcutID;
 - (void)applyModel:(NSDictionary *)model;
 - (void)openAboutGitHub:(id)sender;
+- (void)checkForUpdates:(id)sender;
 - (void)updatePreferencesWindowTitle;
 - (void)resizeWindowForSelectedTabAnimated:(BOOL)animated;
 @end
@@ -962,7 +965,7 @@ static NSString *SBShortcutKeyForEvent(NSEvent *event) {
 static const CGFloat SBNativePreferencesContentWidth = 400.0;
 static const CGFloat SBNativePreferencesGeneralHeight = 144.0;
 static const CGFloat SBNativePreferencesListHeight = 420.0;
-static const CGFloat SBNativePreferencesAboutHeight = 200.0;
+static const CGFloat SBNativePreferencesAboutHeight = 244.0;
 static const CGFloat SBNativePreferencesHorizontalInset = 20.0;
 static const CGFloat SBNativePreferencesRowHeight = 34.0;
 static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
@@ -1261,7 +1264,17 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.aboutGitHubButton.imagePosition = NSImageTrailing;
     self.aboutGitHubButton.showsBorderOnlyWhileMouseInside = YES;
     self.aboutGitHubButton.enabled = NO;
-    for (NSView *view in @[mark, title, self.aboutVersion, self.aboutGitHubButton]) {
+    self.aboutUpdateButton = [NSButton buttonWithTitle:strings[@"checkForUpdates"] ?: @"Check for Updates…"
+                                                 target:self
+                                                 action:@selector(checkForUpdates:)];
+    self.aboutUpdateButton.bezelStyle = NSBezelStyleRounded;
+    self.aboutUpdateButton.controlSize = NSControlSizeRegular;
+    self.aboutUpdateStatus = SBPreferencesSecondaryLabel(@"");
+    self.aboutUpdateStatus.alignment = NSTextAlignmentCenter;
+    self.aboutUpdateStatus.hidden = YES;
+    [self.aboutUpdateStatus.widthAnchor constraintLessThanOrEqualToConstant:320.0].active = YES;
+    for (NSView *view in @[mark, title, self.aboutVersion, self.aboutUpdateButton,
+                           self.aboutUpdateStatus, self.aboutGitHubButton]) {
         [stack addArrangedSubview:view];
     }
 
@@ -1270,6 +1283,19 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         [stack.centerYAnchor constraintEqualToAnchor:root.centerYAnchor constant:-18.0],
     ]];
     return controller;
+}
+
+- (void)checkForUpdates:(id)sender {
+    (void)sender;
+    NSDictionary *update = [self.model[@"update"] isKindOfClass:NSDictionary.class]
+        ? self.model[@"update"]
+        : @{};
+    NSString *phase = [update[@"phase"] isKindOfClass:NSString.class]
+        ? update[@"phase"]
+        : @"idle";
+    NSString *request = [phase isEqualToString:@"available"] ? @"install" : @"check";
+    self.aboutUpdateButton.enabled = NO;
+    SBEmitNativePreferencesAction(@"appUpdate", @"", request);
 }
 
 - (void)openAboutGitHub:(id)sender {
@@ -1403,6 +1429,23 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.aboutGitHubButton.toolTip = githubURL.length > 0
         ? (self.strings[@"github"] ?: @"GitHub")
         : (self.strings[@"githubPending"] ?: @"GitHub link coming soon");
+    NSDictionary *update = [model[@"update"] isKindOfClass:NSDictionary.class]
+        ? model[@"update"]
+        : @{};
+    NSString *phase = [update[@"phase"] isKindOfClass:NSString.class]
+        ? update[@"phase"]
+        : @"idle";
+    NSString *updateTitle = [update[@"title"] isKindOfClass:NSString.class]
+        ? update[@"title"]
+        : (self.strings[@"checkForUpdates"] ?: @"Check for Updates…");
+    NSString *updateStatus = [update[@"status"] isKindOfClass:NSString.class]
+        ? update[@"status"]
+        : @"";
+    self.aboutUpdateButton.title = updateTitle;
+    self.aboutUpdateButton.enabled = ![@[@"checking", @"downloading", @"installing", @"restarting"]
+        containsObject:phase];
+    self.aboutUpdateStatus.stringValue = updateStatus;
+    self.aboutUpdateStatus.hidden = updateStatus.length == 0;
     [self updatePreferencesWindowTitle];
 }
 
@@ -1965,6 +2008,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
         [controller applyModel:@{
             @"language": @"zh",
             @"githubURL": @"",
+            @"update": @{ @"phase": @"idle", @"title": @"检查更新…", @"status": @"" },
             @"startAtLogin": @NO,
             @"startAtLoginLoading": @YES,
             @"rows": @[],
@@ -1992,6 +2036,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
                 @"version": @"版本 %@",
                 @"github": @"GitHub",
                 @"githubPending": @"GitHub 链接稍后添加",
+                @"checkForUpdates": @"检查更新…",
             },
         }];
         if (SBNativePreferencesWindowController.window == nil) result = -1;

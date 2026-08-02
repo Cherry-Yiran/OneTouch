@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OneTouch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "design.ryan.onetouch",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -20,6 +20,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -32,7 +33,15 @@
     "longDescription": "OneTouch collects everyday macOS controls into one focused menu bar utility.",
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "signingIdentity": "Switchboard Local Code Signing"
+      "signingIdentity": "-"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwNDcwMjQzQTQ0RjAwQ0MKUldUTUFFK2tRd0pIWUEvSWIxUENxMlRLbzZHQ2JQNndFR0RIY2tGbFpoTmx0bEYvaDcrR1FiRkkK",
+      "endpoints": [
+        "https://github.com/Cherry-Yiran/OneTouch/releases/latest/download/latest.json"
+      ]
     }
   }
 }
