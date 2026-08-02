@@ -27,6 +27,7 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY \}\}/);
   assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY_PASSWORD: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD \}\}/);
   assert.match(workflow, /tauri-apps\/tauri-action@v1/);
+  assert.match(workflow, /runs-on: macos-26/);
 });
 
 test('the native bridge checks, installs, and relaunches through official Tauri plugins', () => {
