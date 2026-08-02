@@ -7,6 +7,8 @@ export const TIMER_PRESETS = Object.freeze([
   { id: '4h', milliseconds: 4 * 60 * 60 * 1000 },
 ]);
 
+export const TIMER_RETRY_DELAY_MS = 60 * 1000;
+
 export function restoreTimers(value, validIds = TIMED_CONTROL_IDS) {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
@@ -29,9 +31,20 @@ export function endOfDayDeadline(now = Date.now()) {
   return end.getTime();
 }
 
+export function deadlineForTimerChoice(choice, now = Date.now()) {
+  if (choice === 'none') return null;
+  if (choice === 'today') return endOfDayDeadline(now);
+  const preset = TIMER_PRESETS.find((item) => item.id === choice);
+  return preset ? now + preset.milliseconds : undefined;
+}
+
 export function nextTimerDeadline(timers) {
   const deadlines = Object.values(timers || {}).filter(Number.isFinite);
   return deadlines.length > 0 ? Math.min(...deadlines) : null;
+}
+
+export function timerRetryDeadline(now = Date.now()) {
+  return now + TIMER_RETRY_DELAY_MS;
 }
 
 export function formatTimerRemaining(deadline, language, now = Date.now()) {

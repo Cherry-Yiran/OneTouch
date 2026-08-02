@@ -53,7 +53,7 @@ const DROP_ANIMATION = {
   }),
 };
 
-const COPY = {
+export const PREFERENCES_COPY = {
   en: {
     title: 'Preferences',
     general: 'General',
@@ -62,12 +62,14 @@ const COPY = {
     about: 'About',
     close: 'Close preferences',
     language: 'Language',
-    icon: 'Menu bar icon',
     startAtLogin: 'Start at login',
     startAtLoginNote: 'Keep OneTouch ready in the menu bar.',
     autostartError: 'Could not update the login setting.',
     saved: 'Changes are saved on this Mac.',
     activeMenu: 'Visible in menu',
+    customiseIntro: 'Choose up to eight controls and drag to arrange them.',
+    visibleCount: '%ld / %ld',
+    searchControls: 'Search controls',
     detailTitle: 'Control details',
     detailEmpty: 'Select a control to see its status-menu configuration.',
     reorder: 'Drag to reorder',
@@ -90,9 +92,9 @@ const COPY = {
     shortcutUnavailable: 'That shortcut is already used by macOS or another app.',
     shortcutSaved: 'Shortcut saved.',
     aboutTitle: 'OneTouch',
-    aboutLead: 'A quiet status-bar desk for the small Mac controls you use every day.',
-    safety: 'Runs locally on this Mac. macOS asks for permission only when a control needs it.',
-    license: 'Local utility',
+    version: 'Version %@',
+    github: 'GitHub',
+    githubPending: 'GitHub link coming soon',
   },
   zh: {
     title: '偏好设置',
@@ -102,12 +104,14 @@ const COPY = {
     about: '关于',
     close: '关闭偏好设置',
     language: '语言',
-    icon: '菜单栏图标',
     startAtLogin: '登录时启动',
     startAtLoginNote: '让 OneTouch 始终在菜单栏待命。',
     autostartError: '无法更新登录启动设置。',
     saved: '更改已保存在本机。',
     activeMenu: '菜单中显示',
+    customiseIntro: '选择最多八个控制项，并拖动调整顺序。',
+    visibleCount: '%ld / %ld',
+    searchControls: '搜索控制项',
     detailTitle: '控制项详情',
     detailEmpty: '选择一个控制项，查看它在状态栏菜单中的显示方式。',
     reorder: '拖动调整顺序',
@@ -130,9 +134,9 @@ const COPY = {
     shortcutUnavailable: '这个快捷键已被 macOS 或其他应用占用。',
     shortcutSaved: '快捷键已保存。',
     aboutTitle: 'OneTouch',
-    aboutLead: '一个安静的状态栏控制台，收拢你每天都会用到的 Mac 小开关。',
-    safety: '所有操作都在这台 Mac 本地完成；只有功能确实需要时，macOS 才会请求权限。',
-    license: '本地工具',
+    version: '版本 %@',
+    github: 'GitHub',
+    githubPending: 'GitHub 链接稍后添加',
   },
 };
 
@@ -348,8 +352,6 @@ function DraggedControlPreview({ item, title, visible }) {
 export default function Preferences({
   language,
   setLanguage,
-  menuIcon,
-  setMenuIcon,
   items,
   text,
   visibleIds,
@@ -377,7 +379,7 @@ export default function Preferences({
       distance: 6,
     },
   }));
-  const copy = COPY[language];
+  const copy = PREFERENCES_COPY[language];
   const activeItems = useMemo(() => orderedIds.map((id) => items.find((item) => item.id === id)).filter(Boolean), [items, orderedIds]);
   const draggedItem = draggedId ? items.find((item) => item.id === draggedId) : null;
   const draggedTitle = draggedItem ? text[draggedItem.id]?.[0] : '';
@@ -519,7 +521,6 @@ export default function Preferences({
           <section className="pref-panel general-panel" id="pref-panel-general" role="tabpanel" aria-labelledby="pref-tab-general">
             <div className="general-form">
               <div className="general-row"><span>{copy.language}</span><StyledSelect ariaLabel={copy.language} value={language} onChange={setLanguage} options={[{ value: 'zh', label: '简体中文' }, { value: 'en', label: 'English' }]} /></div>
-              <div className="general-row"><span>{copy.icon}</span><StyledSelect ariaLabel={copy.icon} value={menuIcon} onChange={setMenuIcon} options={[{ value: 'switch', label: '◉ Switch' }, { value: 'dots', label: '▦ Grid' }, { value: 'bolt', label: 'ϟ Bolt' }]} /></div>
               <div className="general-row">
                 <span>{copy.startAtLogin}</span>
                 <div className="general-control-stack">
@@ -624,9 +625,9 @@ export default function Preferences({
         {activeTab === 'about' && (
           <section className="pref-panel about-panel" id="pref-panel-about" role="tabpanel" aria-labelledby="pref-tab-about">
             <div className="about-mark"><ToggleRight size={48} /></div>
-            <div><span className="eyebrow">STATUS BAR UTILITY</span><h2>{copy.aboutTitle}</h2><p>{copy.aboutLead}</p></div>
+            <div><h2>{copy.aboutTitle}</h2></div>
             <div className="about-rule" />
-            <div className="about-info"><span>{copy.license}</span><strong>{appVersion || '—'}</strong><p>{copy.safety}</p></div>
+            <div className="about-info"><strong>{appVersion || '—'}</strong></div>
           </section>
         )}
       </div>

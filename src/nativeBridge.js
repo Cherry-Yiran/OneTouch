@@ -171,10 +171,43 @@ export async function showNativePopover() {
   return true;
 }
 
-export async function setNativeMenuIcon(icon) {
+export async function showLegacyPopover() {
   if (!isTauri()) return false;
-  await invoke('set_menu_icon', { icon });
+  await invoke('show_legacy_popover');
   return true;
+}
+
+export async function updateNativePopover(model) {
+  if (!isTauri()) return false;
+  await invoke('update_native_popover', { model });
+  return true;
+}
+
+export async function updateNativePreferences(model) {
+  if (!isTauri()) return false;
+  await invoke('update_native_preferences', { model });
+  return true;
+}
+
+export async function listenForNativePopoverActions(handler) {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('native-popover-action', (event) => handler(event.payload));
+}
+
+export async function listenForNativePreferencesActions(handler) {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('native-preferences-action', (event) => handler(event.payload));
+}
+
+export async function showNativeTimerMenu(anchor, language) {
+  if (!isTauri()) return null;
+  return invoke('show_timer_menu', {
+    anchorRight: anchor.right,
+    anchorBottom: anchor.bottom,
+    language,
+  });
 }
 
 export async function sendNativeCustomizationToPopover(customization) {

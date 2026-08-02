@@ -6,12 +6,13 @@ export default function DiskPanel({
   loading,
   error,
   savingName,
+  closing = false,
   onClose,
   onRetry,
   onToggle,
 }) {
   return (
-    <section className="disk-panel" aria-label={copy.diskPanelTitle}>
+    <section className={`disk-panel secondary-panel ${closing ? 'is-closing' : ''}`} aria-label={copy.diskPanelTitle}>
       <header className="disk-panel-head">
         <button className="disk-back" type="button" onClick={onClose} disabled={Boolean(savingName)} aria-label={copy.diskBack}>
           <ArrowLeft size={18} />

@@ -20,13 +20,6 @@ const ACTION_CONTROL_IDS = new Set([
 const CHOICE_CONTROL_IDS = new Set(['resolution']);
 const SETTINGS_CONTROL_IDS = new Set();
 
-const DESTRUCTIVE_CONTROL_IDS = new Set([
-  'xcodeClean',
-  'emptyTrash',
-  'ejectDisk',
-  'clipboard',
-]);
-
 export function controlKind(id) {
   if (CHOICE_CONTROL_IDS.has(id)) return CONTROL_KINDS.CHOICE;
   if (SETTINGS_CONTROL_IDS.has(id)) return CONTROL_KINDS.SETTINGS;
@@ -34,6 +27,19 @@ export function controlKind(id) {
   return CONTROL_KINDS.TOGGLE;
 }
 
-export function requiresConfirmation(id) {
-  return DESTRUCTIVE_CONTROL_IDS.has(id);
+export function usesSwitchAffordance(kind) {
+  return kind === CONTROL_KINDS.TOGGLE || kind === CONTROL_KINDS.ACTION;
+}
+
+export function controlSwitchState(kind, currentState, { pending = false, completed = false } = {}) {
+  if (kind === CONTROL_KINDS.ACTION) {
+    return {
+      checked: Boolean(pending),
+      locked: Boolean(pending || completed),
+    };
+  }
+  return {
+    checked: kind === CONTROL_KINDS.TOGGLE && Boolean(currentState),
+    locked: false,
+  };
 }

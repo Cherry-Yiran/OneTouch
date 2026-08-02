@@ -14,6 +14,7 @@ export default function ResolutionPanel({
   loading,
   error,
   pendingModeKey,
+  closing = false,
   onClose,
   onRetry,
   onSelectDisplay,
@@ -25,7 +26,7 @@ export default function ResolutionPanel({
   const modes = display?.modes || [];
 
   return (
-    <section className="resolution-panel" aria-label={copy.resolutionPanelTitle}>
+    <section className={`resolution-panel secondary-panel ${closing ? 'is-closing' : ''}`} aria-label={copy.resolutionPanelTitle}>
       <header className="resolution-panel-head">
         <button
           type="button"

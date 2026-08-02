@@ -31,14 +31,15 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
-import Preferences from './Preferences.jsx';
+import Preferences, { PREFERENCES_COPY } from './Preferences.jsx';
 import ResolutionPanel from './ResolutionPanel.jsx';
 import TimerPanel from './TimerPanel.jsx';
 import DiskPanel from './DiskPanel.jsx';
 import {
   CONTROL_KINDS,
   controlKind,
-  requiresConfirmation,
+  controlSwitchState,
+  usesSwitchAffordance,
 } from './controlInteractions.js';
 import {
   getNativeAppVersion,
@@ -50,38 +51,59 @@ import {
   hideNativeWindow,
   isNativeApp,
   listenForNativeCustomization,
+  listenForNativePopoverActions,
+  listenForNativePreferencesActions,
   openNativePreferences,
   openNativeSystemSettings,
   quitNativeApp,
   resizeNativePopover,
   sendNativeCustomizationToPopover,
   setNativeAutostartEnabled,
-  setNativeMenuIcon,
   setNativeDisplayMode,
   setNativeEjectExclusions,
   setNativeSwitch,
+  showLegacyPopover,
   showNativePopover,
+  showNativeTimerMenu,
   syncNativeGlobalShortcuts,
+  updateNativePreferences,
+  updateNativePopover,
+  validateNativeGlobalShortcut,
 } from './nativeBridge.js';
 import { recoveryPaneForError } from './nativeErrors.js';
 import { displayResolutionSummary, primaryDisplay } from './resolutionModel.js';
-import { restoreShortcuts } from './shortcutModel.js';
 import {
+  conflictingShortcutId,
+  formatShortcut,
+  restoreShortcuts,
+} from './shortcutModel.js';
+import {
+  deadlineForTimerChoice,
   formatTimerRemaining,
   nextTimerDeadline,
   restoreTimers,
+  timerRetryDeadline,
   TIMED_CONTROL_IDS,
 } from './timerModel.js';
-import { clampVisibleControlIds, MAX_VISIBLE_CONTROLS } from './visibility.js';
+import {
+  clampVisibleControlIds,
+  MAX_VISIBLE_CONTROLS,
+  toggleVisibleControl,
+} from './visibility.js';
 
 const COPY = {
   en: {
-    preview: 'Preview mode', connected: 'macOS connected', available: 'available', unavailableFeature: 'Not available', unknownState: 'Click once to authorise and read the current state', title: 'OneTouch', subtitle: 'Quick controls', customise: 'Customise', quit: 'Quit', settings: 'Settings', close: 'Close menu', outsideClose: 'Click outside to close', open: 'Open OneTouch menu', enabled: 'enabled', disabled: 'disabled', processing: 'Working…', completed: 'Completed', runAction: 'Run', openSettings: 'Open', confirmAction: 'Confirm', confirmHint: 'Click Confirm again to continue', openingSettings: 'Opening System Settings', unavailable: 'The macOS command could not be completed', permissionRequired: 'This control needs macOS permission', airpodsUnpaired: 'No paired Bluetooth headphones found', airpodsDisconnected: 'Not connected', resolutionPanelTitle: 'Screen resolution', resolutionBack: 'Back to controls', resolutionLoading: 'Reading available resolutions…', resolutionNoDisplay: 'No display', resolutionNoModes: 'No compatible resolutions were found.', resolutionDisplays: 'Displays', resolutionOptions: 'Available resolutions', resolutionHiDpi: 'HiDPI', resolutionStandard: 'Standard', retry: 'Try again', timerTitle: 'Turn off timer', timerBack: 'Back to controls', timerPrompt: 'Choose how long this stays on', timer30m: '30 minutes', timer1h: '1 hour', timer2h: '2 hours', timer4h: '4 hours', timerToday: 'Until the end of today', timerNone: 'No timer', timerNoneNote: 'Keep the current state until you change it', timerTurnsOff: 'OneTouch will turn it off automatically', timerExpired: 'Timer finished', diskPanelTitle: 'Protected disks', diskPanelSubtitle: 'Protected disks stay connected', diskBack: 'Back to controls', diskLoading: 'Reading external disks…', diskNone: 'No external physical disks are connected.', diskProtected: 'Protected — OneTouch will skip this disk', diskWillEject: 'Will be ejected by the main switch', desktop: ['Hide desktop icons', 'Finder'], darkMode: ['Dark mode', 'Switch now · hold the switch for a timer'], awake: ['Keep awake', 'Prevent sleep · hold the switch for a timer'], airpods: ['Bluetooth headphones', 'Automatically uses the connected or most recent audio device'], dnd: ['Focus', 'Silence interruptions · hold the switch for a timer'], nightShift: ['Night Shift', 'Warm the display colours'], screenSaver: ['Screen saver', 'Start a calm screen saver'], trueTone: ['True Tone', 'Match the display to ambient light'], frontApp: ['Switch front app', 'Bring the next app forward'], muteMic: ['Mute microphone', 'Restore the previous input volume when unmuted'], xcodeClean: ['Clean Xcode cache', 'Remove derived data'], emptyTrash: ['Empty Trash', 'Remove discarded files'], ejectDisk: ['Eject external disks', 'Run now · hold the switch to protect disks'], clipboard: ['Clear clipboard', 'Remove copied content'], hideWindow: ['Hide window', 'Hide the front app'], hideDock: ['Hide Dock', 'Show or hide the Dock'], lowPower: ['Low power mode', 'Reduce energy use'], highPower: ['High Power mode', 'Increase sustained performance on supported Macs'], music: ['Music playback', 'Play or pause the current queue'], spotify: ['Spotify playback', 'Play or pause Spotify'], hiddenFiles: ['Show hidden files', 'Reveal files in Finder'], displaySleep: ['Display sleep', 'Turn the display off'], resolution: ['Screen resolution', 'Choose directly in OneTouch'], hideWidgets: ['Hide desktop widgets', 'Keep the desktop clear in every workspace mode'], stageManager: ['Stage Manager', 'Organise open windows around the current task'], cleanScreen: ['Clean screen', 'Hold Esc to finish'], lockKeyboard: ['Lock keyboard', 'Use the menu to unlock'], lockScreen: ['Lock screen', 'Require your password'],
+    preview: 'Preview mode', connected: 'macOS connected', available: 'available', unavailableFeature: 'Not available', unknownState: 'Click once to authorise and read the current state', title: 'OneTouch', subtitle: 'Quick controls', customise: 'Customise', quit: 'Quit', settings: 'Settings', close: 'Close menu', outsideClose: 'Click outside to close', open: 'Open OneTouch menu', enabled: 'enabled', disabled: 'disabled', processing: 'Processing…', completed: 'Completed', trashAlreadyEmpty: 'Trash is already empty', runAction: 'Run', chooseAction: 'Choose', openSettings: 'Open', confirmAction: 'Confirm', confirmHint: 'Click Confirm again to continue', openingSettings: 'Opening System Settings', unavailable: 'The macOS command could not be completed', permissionRequired: 'This control needs macOS permission', airpodsUnpaired: 'No paired Bluetooth headphones found', airpodsDisconnected: 'Not connected', resolutionPanelTitle: 'Screen resolution', resolutionBack: 'Back to controls', resolutionLoading: 'Reading available resolutions…', resolutionNoDisplay: 'No display', resolutionNoModes: 'No compatible resolutions were found.', resolutionDisplays: 'Displays', resolutionOptions: 'Available resolutions', resolutionHiDpi: 'HiDPI', resolutionStandard: 'Standard', retry: 'Try again', timerTitle: 'Turn off timer', timerBack: 'Back to controls', timerPrompt: 'Choose how long this stays on', timer30m: '30 minutes', timer1h: '1 hour', timer2h: '2 hours', timer4h: '4 hours', timerToday: 'Until the end of today', timerNone: 'No timer', timerNoneNote: 'Keep the current state until you change it', timerTurnsOff: 'OneTouch will turn it off automatically', timerExpired: 'Timer finished', timerRetry: 'Could not turn it off · retrying in 1 minute', timerLongPressHint: 'Click to choose a duration', diskLongPressHint: 'Hold to manage protected disks', diskPanelTitle: 'Protected disks', diskPanelSubtitle: 'Protected disks stay connected', diskBack: 'Back to controls', diskLoading: 'Reading external disks…', diskNone: 'No external physical disks are connected.', diskProtected: 'Protected — OneTouch will skip this disk', diskWillEject: 'Will be ejected by the main switch', desktop: ['Hide desktop icons', 'Finder'], darkMode: ['Dark mode', 'Click the switch to choose a duration'], awake: ['Keep awake', 'Click the switch to choose a duration'], airpods: ['Bluetooth headphones', 'Automatically uses the connected or most recent audio device'], dnd: ['Focus', 'Click the switch to choose a duration'], nightShift: ['Night Shift', 'Warm the display colours'], screenSaver: ['Screen saver', 'Start a calm screen saver'], trueTone: ['True Tone', 'Match the display to ambient light'], frontApp: ['Switch front app', 'Bring the next app forward'], muteMic: ['Mute microphone', 'Restore the previous input volume when unmuted'], xcodeClean: ['Clean Xcode cache', 'Remove derived data'], emptyTrash: ['Empty Trash', 'Remove discarded files'], ejectDisk: ['Eject external disks', 'Run now · hold the switch to protect disks'], clipboard: ['Clear clipboard', 'Remove copied content'], hideWindow: ['Hide window', 'Hide the front app'], hideDock: ['Hide Dock', 'Show or hide the Dock'], lowPower: ['Low power mode', 'Reduce energy use'], highPower: ['High Power mode', 'Increase sustained performance on supported Macs'], music: ['Music playback', 'Play or pause the current queue'], spotify: ['Spotify playback', 'Play or pause Spotify'], hiddenFiles: ['Show hidden files', 'Reveal files in Finder'], displaySleep: ['Display sleep', 'Turn the display off'], resolution: ['Screen resolution', 'Choose directly in OneTouch'], hideWidgets: ['Hide desktop widgets', 'Keep the desktop clear in every workspace mode'], stageManager: ['Stage Manager', 'Organise open windows around the current task'], cleanScreen: ['Clean screen', 'Hold Esc to finish'], lockKeyboard: ['Lock keyboard', 'Use the menu to unlock'], lockScreen: ['Lock screen', 'Require your password'],
   },
   zh: {
-    preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在执行…', completed: '已完成', runAction: '执行', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取外置磁盘…', diskNone: '当前没有连接外置物理磁盘。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '短按切换 · 长按开关可定时'], awake: ['保持唤醒', '阻止休眠 · 长按开关可定时'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '减少打扰 · 长按开关可定时'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], ejectDisk: ['推出外置磁盘', '短按执行 · 长按开关保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
+    preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在处理中…', completed: '已完成', trashAlreadyEmpty: '垃圾桶已经空了', runAction: '执行', chooseAction: '选择', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', timerRetry: '关闭失败 · 1 分钟后重试', timerLongPressHint: '点击选择开启时长', diskLongPressHint: '长按管理受保护磁盘', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取外置磁盘…', diskNone: '当前没有连接外置物理磁盘。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '点击开关选择开启时长'], awake: ['保持唤醒', '点击开关选择开启时长'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '点击开关选择开启时长'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], ejectDisk: ['推出外置磁盘', '短按执行 · 长按开关保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
   },
 };
+
+const KEYBOARD_CLEANING_COPY = Object.freeze({
+  en: ['Keyboard cleaning', 'Ignore key presses while cleaning · turn off from the menu'],
+  zh: ['键盘清洁', '清洁时忽略键盘输入 · 从菜单关闭'],
+});
 
 const SWITCHES = [
   { id: 'desktop', icon: Grid3X3 }, { id: 'darkMode', icon: MoonStar }, { id: 'awake', icon: Coffee }, { id: 'airpods', icon: Headphones }, { id: 'dnd', icon: BellOff }, { id: 'nightShift', icon: MoonStar }, { id: 'screenSaver', icon: MonitorUp }, { id: 'trueTone', icon: Sun },
@@ -91,13 +113,29 @@ const SWITCHES = [
 const NON_TOGGLE_CONTROL_IDS = SWITCHES
   .filter((item) => item.kind !== CONTROL_KINDS.TOGGLE)
   .map((item) => item.id);
+const MIN_ACTION_PROGRESS_MS = 650;
 const COMPLETION_FEEDBACK_MS = 1400;
+const SECONDARY_PANEL_EXIT_MS = 100;
+const GITHUB_URL = 'https://github.com/Cherry-Yiran?tab=repositories';
+const TIMER_POPOVER_WIDTH = 178;
+const TIMER_POPOVER_HEIGHT = 220;
+const TIMER_POPOVER_GAP = 6;
+const TIMER_POPOVER_MARGIN = 8;
 
 const INITIAL_SWITCHES = { desktop: true, darkMode: true, awake: false, airpods: true, dnd: true, nightShift: true, screenSaver: false, trueTone: true, frontApp: false, muteMic: false, xcodeClean: false, emptyTrash: false, ejectDisk: false, clipboard: false, hideWindow: false, hideDock: false, lowPower: false, highPower: false, music: false, spotify: false, hiddenFiles: false, displaySleep: false, resolution: false, hideWidgets: false, stageManager: false, cleanScreen: false, lockKeyboard: false, lockScreen: false };
 
 const DEFAULT_VISIBLE_IDS = SWITCHES.slice(0, 8).map((item) => item.id);
 const ALL_SWITCH_IDS = SWITCHES.map((item) => item.id);
-const MENU_BAR_ICONS = { switch: ToggleRight, command: ToggleRight, dots: Grid3X3, bolt: Zap };
+const NATIVE_SYMBOLS = Object.freeze({
+  desktop: 'square.grid.3x3', darkMode: 'moon.stars', awake: 'cup.and.saucer', airpods: 'headphones',
+  dnd: 'moon.fill', nightShift: 'moon.haze', screenSaver: 'display', trueTone: 'sun.max',
+  frontApp: 'macwindow.on.rectangle', muteMic: 'mic.slash', xcodeClean: 'paintbrush', emptyTrash: 'trash',
+  ejectDisk: 'eject', clipboard: 'clipboard', hideWindow: 'eye.slash', hideDock: 'dock.rectangle',
+  lowPower: 'bolt', highPower: 'gauge.with.dots.needle.67percent', music: 'music.note', spotify: 'waveform',
+  hiddenFiles: 'folder', displaySleep: 'display', resolution: 'display.and.arrow.down',
+  hideWidgets: 'rectangle.3.group', stageManager: 'squares.leading.rectangle',
+  cleanScreen: 'eye', lockKeyboard: 'keyboard', lockScreen: 'lock',
+});
 
 function restoreIds(storageKey, fallback, includeNewItems = false) {
   try {
@@ -127,6 +165,45 @@ function normaliseOrderedIds(ids) {
   return [...restored, ...ALL_SWITCH_IDS.filter((id) => !restored.includes(id))];
 }
 
+function useSecondaryPress(onLongPress, blocked) {
+  const pressTimerRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
+  const [pressing, setPressing] = useState(false);
+
+  const cancel = () => {
+    window.clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = null;
+    setPressing(false);
+  };
+
+  const open = (consumeNextClick = false) => {
+    if (!onLongPress || blocked) return;
+    cancel();
+    longPressTriggeredRef.current = consumeNextClick;
+    onLongPress();
+  };
+
+  const begin = (event) => {
+    if (!onLongPress || blocked || event.button !== 0) return;
+    longPressTriggeredRef.current = false;
+    cancel();
+    setPressing(true);
+    pressTimerRef.current = window.setTimeout(() => open(true), 480);
+  };
+
+  const consumeClick = () => {
+    if (!longPressTriggeredRef.current) return false;
+    longPressTriggeredRef.current = false;
+    return true;
+  };
+
+  useEffect(() => () => {
+    window.clearTimeout(pressTimerRef.current);
+  }, []);
+
+  return { begin, cancel, consumeClick, open, pressing };
+}
+
 function Toggle({
   checked,
   loading = false,
@@ -134,61 +211,44 @@ function Toggle({
   stateKnown = true,
   onChange,
   onLongPress,
+  popoverOpen = false,
+  timerTriggerId,
   label,
 }) {
-  const pressTimerRef = useRef(null);
-  const longPressTriggeredRef = useRef(false);
-
-  useEffect(() => () => {
-    window.clearTimeout(pressTimerRef.current);
-  }, []);
-
-  const cancelLongPress = () => {
-    window.clearTimeout(pressTimerRef.current);
-    pressTimerRef.current = null;
-  };
-
-  const beginLongPress = (event) => {
-    if (!onLongPress || event.button !== 0 || loading || disabled) return;
-    longPressTriggeredRef.current = false;
-    cancelLongPress();
-    pressTimerRef.current = window.setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      onLongPress();
-    }, 480);
-  };
+  const secondary = useSecondaryPress(onLongPress, loading || disabled);
 
   return (
     <button
-      className={`toggle ${checked ? 'is-on' : ''} ${loading ? 'is-loading' : ''} ${disabled ? 'is-unavailable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${onLongPress ? 'supports-long-press' : ''}`}
+      className={`toggle ${checked ? 'is-on' : ''} ${loading ? 'is-loading' : ''} ${disabled ? 'is-unavailable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${onLongPress ? 'supports-long-press' : ''} ${secondary.pressing ? 'is-secondary-pressing' : ''} ${popoverOpen ? 'has-open-popover' : ''}`}
       type="button"
       role="switch"
       aria-checked={checked}
       aria-busy={loading}
+      aria-haspopup={timerTriggerId ? 'menu' : undefined}
+      aria-expanded={timerTriggerId ? popoverOpen : undefined}
+      aria-controls={popoverOpen && timerTriggerId ? `timer-popover-${timerTriggerId}` : undefined}
       aria-label={label}
       data-state-known={stateKnown}
+      data-timer-trigger={timerTriggerId}
       disabled={loading || disabled}
-      onPointerDown={beginLongPress}
-      onPointerUp={cancelLongPress}
-      onPointerCancel={cancelLongPress}
-      onPointerLeave={cancelLongPress}
+      onPointerDown={secondary.begin}
+      onPointerUp={secondary.cancel}
+      onPointerCancel={secondary.cancel}
+      onPointerLeave={secondary.cancel}
       onContextMenu={(event) => {
         if (!onLongPress) return;
         event.preventDefault();
-        onLongPress();
+        secondary.open(false);
       }}
       onKeyDown={(event) => {
         if (onLongPress && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
           event.preventDefault();
-          onLongPress();
+          secondary.open(false);
         }
       }}
-      onClick={() => {
-        if (longPressTriggeredRef.current) {
-          longPressTriggeredRef.current = false;
-          return;
-        }
-        onChange();
+      onClick={(event) => {
+        if (secondary.consumeClick()) return;
+        onChange(event.currentTarget);
       }}
     >
       <span />
@@ -198,60 +258,38 @@ function Toggle({
 
 function RowAction({
   pending,
-  confirming,
   completed,
   disabled,
   onClick,
   onLongPress,
   label,
 }) {
-  const pressTimerRef = useRef(null);
-  const longPressTriggeredRef = useRef(false);
-
-  useEffect(() => () => {
-    window.clearTimeout(pressTimerRef.current);
-  }, []);
-
-  const cancelLongPress = () => {
-    window.clearTimeout(pressTimerRef.current);
-    pressTimerRef.current = null;
-  };
+  const secondary = useSecondaryPress(onLongPress, pending || disabled);
 
   return (
     <button
-      className={`toggle momentary-control ${pending ? 'is-loading' : ''} ${confirming ? 'is-confirming' : ''} ${completed ? 'is-on is-complete' : ''} ${onLongPress ? 'supports-long-press' : ''}`}
+      className={`toggle momentary-control ${pending ? 'is-loading' : ''} ${completed ? 'is-on is-complete' : ''} ${onLongPress ? 'supports-long-press' : ''} ${secondary.pressing ? 'is-secondary-pressing' : ''}`}
       type="button"
       aria-busy={pending}
       aria-label={label}
       disabled={pending || disabled}
-      onPointerDown={(event) => {
-        if (!onLongPress || event.button !== 0 || pending || disabled) return;
-        longPressTriggeredRef.current = false;
-        cancelLongPress();
-        pressTimerRef.current = window.setTimeout(() => {
-          longPressTriggeredRef.current = true;
-          onLongPress();
-        }, 480);
-      }}
-      onPointerUp={cancelLongPress}
-      onPointerCancel={cancelLongPress}
-      onPointerLeave={cancelLongPress}
+      onPointerDown={secondary.begin}
+      onPointerUp={secondary.cancel}
+      onPointerCancel={secondary.cancel}
+      onPointerLeave={secondary.cancel}
       onContextMenu={(event) => {
         if (!onLongPress) return;
         event.preventDefault();
-        onLongPress();
+        secondary.open(false);
       }}
       onKeyDown={(event) => {
         if (onLongPress && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
           event.preventDefault();
-          onLongPress();
+          secondary.open(false);
         }
       }}
       onClick={() => {
-        if (longPressTriggeredRef.current) {
-          longPressTriggeredRef.current = false;
-          return;
-        }
+        if (secondary.consumeClick()) return;
         onClick();
       }}
     >
@@ -304,10 +342,6 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
-  const [menuIcon, setMenuIcon] = useState(() => {
-    const savedIcon = localStorage.getItem('switchboard-menu-icon');
-    return !savedIcon || savedIcon === 'command' ? 'switch' : savedIcon;
-  });
   const [switches, setSwitches] = useState(() => {
     try {
       const restored = { ...INITIAL_SWITCHES, ...JSON.parse(localStorage.getItem('switchboard-state') || '{}') };
@@ -330,9 +364,11 @@ export default function App() {
   const [startAtLogin, setStartAtLogin] = useState(false);
   const [startAtLoginLoading, setStartAtLoginLoading] = useState(nativeApp && nativeView === 'preferences');
   const [startAtLoginError, setStartAtLoginError] = useState('');
+  const [nativePreferencesMessage, setNativePreferencesMessage] = useState('');
+  const [nativePreferencesMessageError, setNativePreferencesMessageError] = useState(false);
   const [pendingActionIds, setPendingActionIds] = useState(() => new Set());
   const [completedActionIds, setCompletedActionIds] = useState(() => new Set());
-  const [confirmingActionId, setConfirmingActionId] = useState(null);
+  const [actionResultMessages, setActionResultMessages] = useState({});
   const [nativeControls, setNativeControls] = useState(null);
   const [nativeSnapshotReady, setNativeSnapshotReady] = useState(!nativeApp);
   const [audioDeviceState, setAudioDeviceState] = useState(null);
@@ -345,14 +381,105 @@ export default function App() {
   const [resolutionError, setResolutionError] = useState('');
   const [pendingResolutionMode, setPendingResolutionMode] = useState('');
   const [timerPanelControlId, setTimerPanelControlId] = useState(null);
+  const [timerPopoverAnchor, setTimerPopoverAnchor] = useState(null);
   const [timerSelectionPending, setTimerSelectionPending] = useState(false);
   const [diskPanelOpen, setDiskPanelOpen] = useState(false);
+  const [closingSecondaryPanel, setClosingSecondaryPanel] = useState(null);
   const [externalDisks, setExternalDisks] = useState([]);
   const [externalDisksLoading, setExternalDisksLoading] = useState(false);
   const [externalDisksError, setExternalDisksError] = useState('');
   const [savingDiskName, setSavingDiskName] = useState('');
   const shortcutActionRef = useRef(null);
-  const text = COPY[language];
+  const nativePopoverActionRef = useRef(null);
+  const nativePreferencesActionRef = useRef(null);
+  const timerRearmAttemptedRef = useRef(new Set());
+  const secondaryCloseTimerRef = useRef(null);
+  const secondaryClosingRef = useRef(null);
+  const text = useMemo(() => ({
+    ...COPY[language],
+    lockKeyboard: KEYBOARD_CLEANING_COPY[language],
+  }), [language]);
+
+  const closeSecondaryPanel = (panel) => {
+    if (secondaryClosingRef.current) return;
+    secondaryClosingRef.current = panel;
+    setClosingSecondaryPanel(panel);
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    secondaryCloseTimerRef.current = window.setTimeout(() => {
+      if (panel === 'resolution') setResolutionPanelOpen(false);
+      if (panel === 'disk') setDiskPanelOpen(false);
+      secondaryClosingRef.current = null;
+      setClosingSecondaryPanel(null);
+    }, reducedMotion ? 0 : SECONDARY_PANEL_EXIT_MS);
+  };
+
+  useEffect(() => () => {
+    window.clearTimeout(secondaryCloseTimerRef.current);
+  }, []);
+
+  const closeTimerPopover = () => {
+    setTimerPanelControlId(null);
+    setTimerPopoverAnchor(null);
+  };
+
+  const openTimerPopover = (id, trigger) => {
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const hostRect = trigger.closest('.status-popover')?.getBoundingClientRect() || {
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+      left: 0,
+      width: window.innerWidth,
+    };
+    const belowTop = rect.bottom - hostRect.top + TIMER_POPOVER_GAP;
+    const fitsBelow = rect.bottom + TIMER_POPOVER_GAP + TIMER_POPOVER_HEIGHT
+      <= hostRect.bottom - TIMER_POPOVER_MARGIN;
+    const top = fitsBelow
+      ? belowTop
+      : Math.max(TIMER_POPOVER_MARGIN, rect.top - hostRect.top - TIMER_POPOVER_GAP - TIMER_POPOVER_HEIGHT);
+    const left = Math.min(
+      Math.max(TIMER_POPOVER_MARGIN, rect.right - hostRect.left - TIMER_POPOVER_WIDTH),
+      hostRect.width - TIMER_POPOVER_WIDTH - TIMER_POPOVER_MARGIN,
+    );
+    setResolutionPanelOpen(false);
+    setDiskPanelOpen(false);
+    setTimerPopoverAnchor({
+      top,
+      left,
+      placement: fitsBelow ? 'below' : 'above',
+    });
+    setTimerPanelControlId(id);
+  };
+
+  const openTimerPicker = async (id, trigger) => {
+    if (!nativeApp) {
+      openTimerPopover(id, trigger);
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    setTimerPopoverAnchor(null);
+    setTimerPanelControlId(id);
+    try {
+      const choice = await showNativeTimerMenu({
+        right: rect.right,
+        bottom: rect.bottom,
+      }, language);
+      closeTimerPopover();
+      if (!choice) return;
+      const deadline = deadlineForTimerChoice(choice);
+      if (deadline !== undefined) await applyControlTimer(id, deadline);
+    } catch (error) {
+      closeTimerPopover();
+      const message = localiseNativeError(error, language, text);
+      setRowMessages((current) => ({
+        ...current,
+        [id]: { text: message, recoveryPane: null },
+      }));
+      setAnnouncement(`${text[id]?.[0] || id}: ${message}`);
+    }
+  };
 
   useEffect(() => localStorage.setItem('switchboard-language', language), [language]);
   useEffect(() => localStorage.setItem('switchboard-state', JSON.stringify(switches)), [switches]);
@@ -360,15 +487,9 @@ export default function App() {
   useEffect(() => localStorage.setItem('switchboard-order', JSON.stringify(orderedIds)), [orderedIds]);
   useEffect(() => localStorage.setItem('switchboard-shortcuts', JSON.stringify(shortcuts)), [shortcuts]);
   useEffect(() => localStorage.setItem('switchboard-timers', JSON.stringify(timers)), [timers]);
-  useEffect(() => localStorage.setItem('switchboard-menu-icon', menuIcon), [menuIcon]);
   useEffect(() => {
     getNativeAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
   }, []);
-  useEffect(() => {
-    if (!confirmingActionId) return undefined;
-    const timer = window.setTimeout(() => setConfirmingActionId(null), 3000);
-    return () => window.clearTimeout(timer);
-  }, [confirmingActionId]);
   useEffect(() => {
     if (nativeView !== 'preferences') return;
     sendNativeCustomizationToPopover({ visibleIds, orderedIds, shortcuts }).catch(() => undefined);
@@ -404,8 +525,39 @@ export default function App() {
       unlisten();
     };
   }, [nativeView]);
+
   useEffect(() => {
-    if (nativeView !== 'preferences') return undefined;
+    if (!nativeApp || nativeView !== 'popover') return undefined;
+    let disposed = false;
+    let unlisten = () => {};
+    listenForNativePopoverActions((payload) => {
+      nativePopoverActionRef.current?.(payload);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten();
+    };
+  }, [nativeApp, nativeView]);
+  useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover') return undefined;
+    let disposed = false;
+    let unlisten = () => {};
+    listenForNativePreferencesActions((payload) => {
+      nativePreferencesActionRef.current?.(payload);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten();
+    };
+  }, [nativeApp, nativeView]);
+  useEffect(() => {
+    if (!nativeApp || !['popover', 'preferences'].includes(nativeView)) return undefined;
     let disposed = false;
     setStartAtLoginLoading(true);
     getNativeAutostartEnabled()
@@ -421,24 +573,17 @@ export default function App() {
     return () => { disposed = true; };
   }, [language, nativeView]);
   useEffect(() => {
-    if (!nativeApp) return;
-    const timer = window.setTimeout(() => {
-      setNativeMenuIcon(menuIcon).catch(() => undefined);
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [menuIcon, nativeApp]);
-  useEffect(() => {
     document.documentElement.dataset.nativeView = nativeView || 'preview';
     return () => { delete document.documentElement.dataset.nativeView; };
   }, [nativeView]);
   useEffect(() => {
     if (!resolutionPanelOpen) return undefined;
     const closeOnEscape = (event) => {
-      if (event.key === 'Escape' && !pendingResolutionMode) setResolutionPanelOpen(false);
+      if (event.key === 'Escape' && !pendingResolutionMode) closeSecondaryPanel('resolution');
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [pendingResolutionMode, resolutionPanelOpen]);
+  }, [pendingResolutionMode, resolutionPanelOpen, closingSecondaryPanel]);
   const refreshNativeSnapshot = async () => {
     if (!nativeApp) return null;
     const snapshot = await getNativeSnapshot();
@@ -465,6 +610,79 @@ export default function App() {
   }, [nativeApp]);
 
   useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover' || !nativeSnapshotReady) return;
+    const now = Date.now();
+    const activeTimerIds = new Set(
+      Object.entries(timers)
+        .filter(([, deadline]) => deadline > now)
+        .map(([id]) => id),
+    );
+    timerRearmAttemptedRef.current.forEach((id) => {
+      const control = nativeControls?.[id];
+      const controlEnabled = control?.stateKnown !== false && Boolean(control?.state);
+      if (!activeTimerIds.has(id) || controlEnabled) timerRearmAttemptedRef.current.delete(id);
+    });
+
+    Object.keys(timers).forEach((id) => {
+      const control = nativeControls?.[id];
+      const controlEnabled = control?.stateKnown !== false && Boolean(control?.state);
+      if (
+        timers[id] <= now
+        || controlEnabled
+        || control?.available === false
+        || pendingActionIds.has(id)
+        || timerRearmAttemptedRef.current.has(id)
+      ) return;
+
+      timerRearmAttemptedRef.current.add(id);
+      setPendingActionIds((current) => new Set(current).add(id));
+      setNativeSwitch(id, true)
+        .then((result) => {
+          const enabled = Boolean(result?.state ?? true);
+          setSwitches((current) => ({ ...current, [id]: enabled }));
+          setNativeControls((current) => current ? ({
+            ...current,
+            [id]: {
+              ...current[id],
+              state: enabled,
+              stateKnown: result?.stateKnown !== false,
+            },
+          }) : current);
+          setRowMessages((current) => ({ ...current, [id]: null }));
+        })
+        .catch((error) => {
+          const message = localiseNativeError(error, language, text);
+          setTimers((current) => {
+            const next = { ...current };
+            delete next[id];
+            return next;
+          });
+          setRowMessages((current) => ({
+            ...current,
+            [id]: { text: message, recoveryPane: recoveryPaneForError(error) },
+          }));
+          setAnnouncement(`${text[id]?.[0] || id}: ${message}`);
+        })
+        .finally(() => {
+          setPendingActionIds((current) => {
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+          });
+        });
+    });
+  }, [
+    language,
+    nativeApp,
+    nativeControls,
+    nativeSnapshotReady,
+    nativeView,
+    pendingActionIds,
+    text,
+    timers,
+  ]);
+
+  useEffect(() => {
     if (nativeApp && nativeView !== 'popover') return undefined;
     const nextDeadline = nextTimerDeadline(timers);
     if (!nextDeadline) return undefined;
@@ -473,6 +691,9 @@ export default function App() {
       const dueIds = Object.entries(timers)
         .filter(([, deadline]) => deadline <= Date.now())
         .map(([id]) => id);
+      const completedIds = [];
+      const cancelledIds = [];
+      const retryDeadlines = {};
       for (const id of dueIds) {
         try {
           const result = await setNativeSwitch(id, false);
@@ -485,20 +706,35 @@ export default function App() {
               stateKnown: result?.stateKnown !== false,
             },
           }) : current);
+          setRowMessages((current) => ({ ...current, [id]: null }));
           setAnnouncement(`${text[id]?.[0] || id}: ${text.timerExpired}`);
+          completedIds.push(id);
         } catch (error) {
           const message = localiseNativeError(error, language, text);
+          const recoveryPane = recoveryPaneForError(error);
+          if (recoveryPane) {
+            cancelledIds.push(id);
+          } else {
+            retryDeadlines[id] = timerRetryDeadline();
+          }
           setRowMessages((current) => ({
             ...current,
-            [id]: { text: message, recoveryPane: recoveryPaneForError(error) },
+            [id]: {
+              text: recoveryPane ? message : text.timerRetry,
+              recoveryPane,
+            },
           }));
-          setAnnouncement(`${text[id]?.[0] || id}: ${message}`);
+          setAnnouncement(`${text[id]?.[0] || id}: ${message}${recoveryPane ? '' : ` · ${text.timerRetry}`}`);
         }
       }
       if (dueIds.length > 0) {
         setTimers((current) => {
           const next = { ...current };
-          dueIds.forEach((id) => delete next[id]);
+          completedIds.forEach((id) => delete next[id]);
+          cancelledIds.forEach((id) => delete next[id]);
+          Object.entries(retryDeadlines).forEach(([id, deadline]) => {
+            next[id] = deadline;
+          });
           return next;
         });
       }
@@ -513,13 +749,12 @@ export default function App() {
       .slice(0, MAX_VISIBLE_CONTROLS),
     [orderedIds, visibleIds],
   );
-  const TrayIcon = MENU_BAR_ICONS[menuIcon] || ToggleRight;
   const currentResolutionSummary = displayResolutionSummary(displayConfiguration);
 
   useEffect(() => {
-    if (nativeView !== 'popover') return;
+    if (nativeView !== 'popover' || nativeApp) return;
     resizeNativePopover(menuItems.length).catch(() => undefined);
-  }, [menuItems.length, nativeView]);
+  }, [menuItems.length, nativeApp, nativeView]);
 
   const loadDisplayConfiguration = async () => {
     setResolutionLoading(true);
@@ -545,10 +780,11 @@ export default function App() {
   };
 
   const openResolutionPanel = async () => {
-    setTimerPanelControlId(null);
+    closeTimerPopover();
     setDiskPanelOpen(false);
     setResolutionPanelOpen(true);
     setResolutionError('');
+    if (nativeApp) await showLegacyPopover();
     await loadDisplayConfiguration();
   };
 
@@ -583,11 +819,6 @@ export default function App() {
     const kind = control?.mode || controlKind(id);
     const controlTitle = text[id]?.[0] || id;
     setRowMessages((current) => ({ ...current, [id]: null }));
-    setCompletedActionIds((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
 
     if (id === 'resolution') {
       await openResolutionPanel();
@@ -595,20 +826,24 @@ export default function App() {
     }
 
     if (kind !== CONTROL_KINDS.TOGGLE) {
-      if (pendingActionIds.has(id)) return;
-      if (kind === CONTROL_KINDS.ACTION && requiresConfirmation(id) && confirmingActionId !== id) {
-        setConfirmingActionId(id);
-        setAnnouncement(`${controlTitle}: ${text.confirmHint}`);
-        return;
-      }
-      setConfirmingActionId(null);
+      if (pendingActionIds.has(id) || completedActionIds.has(id)) return;
+      setActionResultMessages((current) => ({ ...current, [id]: null }));
       setAnnouncement(`${controlTitle}: ${text.processing}`);
       setPendingActionIds((current) => new Set(current).add(id));
+      const progressStartedAt = Date.now();
 
       try {
-        await setNativeSwitch(id, true);
+        const result = await setNativeSwitch(id, true);
         if (kind === CONTROL_KINDS.ACTION) {
-          setAnnouncement(`${controlTitle}: ${text.completed}`);
+          const remainingProgress = MIN_ACTION_PROGRESS_MS - (Date.now() - progressStartedAt);
+          if (remainingProgress > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, remainingProgress));
+          }
+          const completionMessage = id === 'emptyTrash' && result?.message === 'trash-already-empty'
+            ? text.trashAlreadyEmpty
+            : text.completed;
+          setAnnouncement(`${controlTitle}: ${completionMessage}`);
+          setActionResultMessages((current) => ({ ...current, [id]: completionMessage }));
           setCompletedActionIds((current) => new Set(current).add(id));
           window.setTimeout(() => {
             setCompletedActionIds((current) => {
@@ -616,12 +851,14 @@ export default function App() {
               next.delete(id);
               return next;
             });
+            setActionResultMessages((current) => ({ ...current, [id]: null }));
           }, COMPLETION_FEEDBACK_MS);
         } else {
           setAnnouncement(`${controlTitle}: ${text.openingSettings}`);
         }
       } catch (error) {
         const message = localiseNativeError(error, language, text);
+        setActionResultMessages((current) => ({ ...current, [id]: null }));
         setRowMessages((current) => ({
           ...current,
           [id]: { text: message, recoveryPane: recoveryPaneForError(error) },
@@ -638,7 +875,6 @@ export default function App() {
       return;
     }
 
-    setConfirmingActionId(null);
     const currentState = typeof currentStateOverride === 'boolean'
       ? currentStateOverride
       : Boolean(switches[id]);
@@ -687,16 +923,7 @@ export default function App() {
 
   const applyControlTimer = async (id, deadline) => {
     if (timerSelectionPending) return;
-    if (!deadline) {
-      setTimers((current) => {
-        const next = { ...current };
-        delete next[id];
-        return next;
-      });
-      setTimerPanelControlId(null);
-      return;
-    }
-
+    closeTimerPopover();
     setTimerSelectionPending(true);
     const control = nativeControls?.[id];
     const currentlyEnabled = control?.stateKnown !== false && typeof control?.state === 'boolean'
@@ -704,9 +931,13 @@ export default function App() {
       : Boolean(switches[id]);
     const enabled = currentlyEnabled || await activateControl(id, false);
     if (enabled) {
-      setTimers((current) => ({ ...current, [id]: deadline }));
-      setTimerPanelControlId(null);
-      setAnnouncement(`${text[id]?.[0] || id}: ${formatTimerRemaining(deadline, language)}`);
+      setTimers((current) => {
+        const next = { ...current };
+        if (deadline) next[id] = deadline;
+        else delete next[id];
+        return next;
+      });
+      setAnnouncement(`${text[id]?.[0] || id}: ${deadline ? formatTimerRemaining(deadline, language) : text.enabled}`);
     }
     setTimerSelectionPending(false);
   };
@@ -725,7 +956,7 @@ export default function App() {
 
   const openDiskPanel = async () => {
     setResolutionPanelOpen(false);
-    setTimerPanelControlId(null);
+    closeTimerPopover();
     setDiskPanelOpen(true);
     await loadExternalDisks();
   };
@@ -754,7 +985,7 @@ export default function App() {
   shortcutActionRef.current = async (id) => {
     if (!ALL_SWITCH_IDS.includes(id)) return;
     const kind = nativeControls?.[id]?.mode || controlKind(id);
-    if (kind === CONTROL_KINDS.CHOICE || requiresConfirmation(id)) {
+    if (kind === CONTROL_KINDS.CHOICE) {
       await showNativePopover();
     }
 
@@ -810,6 +1041,68 @@ export default function App() {
     }
   };
 
+  nativePreferencesActionRef.current = async ({
+    action,
+    controlId = '',
+    payload = '',
+  } = {}) => {
+    const preferenceCopy = PREFERENCES_COPY[language];
+    if (action === 'language' && ['zh', 'en'].includes(payload)) {
+      setLanguage(payload);
+      setNativePreferencesMessage('');
+      setNativePreferencesMessageError(false);
+      return;
+    }
+    if (action === 'startAtLogin') {
+      await updateStartAtLogin(payload === '1');
+      return;
+    }
+    if (action === 'visibility' && ALL_SWITCH_IDS.includes(controlId)) {
+      const requestedVisible = payload === '1';
+      setVisibleIds((current) => {
+        if (current.includes(controlId) === requestedVisible) return current;
+        return toggleVisibleControl(current, controlId);
+      });
+      return;
+    }
+    if (action === 'order') {
+      try {
+        const requested = JSON.parse(payload);
+        const next = normaliseOrderedIds(requested);
+        setOrderedIds((current) => sameIds(current, next) ? current : next);
+      } catch {
+        // Ignore malformed native ordering messages and preserve the saved order.
+      }
+      return;
+    }
+    if (action !== 'shortcut' || !ALL_SWITCH_IDS.includes(controlId)) return;
+
+    if (!payload) {
+      setShortcuts((current) => {
+        const next = { ...current };
+        delete next[controlId];
+        return next;
+      });
+      setNativePreferencesMessage('');
+      setNativePreferencesMessageError(false);
+      return;
+    }
+    if (conflictingShortcutId(shortcuts, controlId, payload)) {
+      setNativePreferencesMessage(preferenceCopy.shortcutDuplicate);
+      setNativePreferencesMessageError(true);
+      return;
+    }
+    try {
+      await validateNativeGlobalShortcut(payload);
+      setShortcuts((current) => ({ ...current, [controlId]: payload }));
+      setNativePreferencesMessage(preferenceCopy.shortcutSaved);
+      setNativePreferencesMessageError(false);
+    } catch {
+      setNativePreferencesMessage(preferenceCopy.shortcutUnavailable);
+      setNativePreferencesMessageError(true);
+    }
+  };
+
   const recoverPermission = async (id, pane) => {
     const controlTitle = text[id]?.[0] || id;
     try {
@@ -832,12 +1125,203 @@ export default function App() {
     setIsOpen(false);
   };
 
+  nativePopoverActionRef.current = async ({ action, controlId, value } = {}) => {
+    if (action === 'refresh') {
+      await refreshNativeSnapshot().catch(() => undefined);
+      return;
+    }
+    if (action === 'settings') {
+      await openPreferences();
+      return;
+    }
+    if (action === 'quit') {
+      await quit();
+      return;
+    }
+    if (!ALL_SWITCH_IDS.includes(controlId)) return;
+    if (action === 'state') {
+      const enabled = Boolean(value);
+      setSwitches((current) => ({ ...current, [controlId]: enabled }));
+      setNativeControls((current) => current ? ({
+        ...current,
+        [controlId]: {
+          ...current[controlId],
+          state: enabled,
+          stateKnown: true,
+        },
+      }) : current);
+      setPendingActionIds((current) => {
+        const next = new Set(current);
+        next.delete(controlId);
+        return next;
+      });
+      return;
+    }
+    if (action === 'timer') {
+      const choice = ['30m', '1h', '2h', '4h', 'today', 'none'][value];
+      const deadline = deadlineForTimerChoice(choice);
+      if (deadline !== undefined) await applyControlTimer(controlId, deadline);
+      return;
+    }
+
+    const feedback = rowMessages[controlId];
+    const control = nativeControls?.[controlId];
+    const recoveryPane = (typeof feedback === 'object' && feedback?.recoveryPane)
+      || recoveryPaneForError(control?.message);
+    if (recoveryPane) {
+      await recoverPermission(controlId, recoveryPane);
+      return;
+    }
+    if (action === 'toggle') {
+      await activateControl(controlId, !Boolean(value));
+      return;
+    }
+    await activateControl(controlId);
+  };
+
+  const nativePopoverModel = useMemo(() => ({
+    language,
+    title: text.title,
+    subtitle: text.subtitle,
+    settingsLabel: text.settings,
+    customiseLabel: text.customise,
+    quitLabel: text.quit,
+    rows: menuItems.map((item) => {
+      const [defaultTitle, defaultDescription] = text[item.id];
+      const control = nativeControls?.[item.id];
+      const pending = pendingActionIds.has(item.id);
+      const unavailable = Boolean(nativeApp && control && !control.available);
+      const stateKnown = !nativeApp
+        || (nativeSnapshotReady && Boolean(control) && control.stateKnown !== false);
+      const kind = control?.mode || item.kind;
+      const completed = completedActionIds.has(item.id);
+      const { checked, locked: actionLocked } = controlSwitchState(
+        kind,
+        stateKnown && Boolean(switches[item.id]),
+        { pending, completed },
+      );
+      const feedback = rowMessages[item.id];
+      const error = typeof feedback === 'string' ? feedback : feedback?.text;
+      const recoveryPane = feedback?.recoveryPane || recoveryPaneForError(control?.message);
+      const title = item.id === 'airpods' && audioDeviceState?.paired
+        ? audioDeviceState.name
+        : defaultTitle;
+      const unavailableMessage = item.id === 'airpods'
+        ? text.airpodsUnpaired
+        : localiseNativeError(control?.message, language, text);
+      const description = item.id === 'airpods'
+        ? audioDeviceDescription(audioDeviceState, language, text)
+        : item.id === 'resolution' && currentResolutionSummary
+          ? currentResolutionSummary
+          : defaultDescription;
+      const timerStatus = TIMED_CONTROL_IDS.includes(item.id) && checked
+        ? timers[item.id]
+          ? formatTimerRemaining(timers[item.id], language)
+          : text.timerNone
+        : '';
+      const status = unavailable
+        ? unavailableMessage
+        : pending
+          ? text.processing
+          : completed
+            ? actionResultMessages[item.id] || text.completed
+            : error || timerStatus
+              || (!stateKnown && kind === CONTROL_KINDS.TOGGLE ? text.unknownState : description);
+      const actionLabel = recoveryPane
+        ? text.openSettings
+        : kind === CONTROL_KINDS.CHOICE
+          ? text.chooseAction
+          : kind === CONTROL_KINDS.SETTINGS
+            ? text.openSettings
+            : text.runAction;
+      return {
+        id: item.id,
+        title,
+        status,
+        symbol: NATIVE_SYMBOLS[item.id] || 'circle',
+        kind,
+        checked,
+        enabled: !unavailable,
+        locked: actionLocked,
+        pending,
+        timed: TIMED_CONTROL_IDS.includes(item.id),
+        error: Boolean(error),
+        actionLabel,
+      };
+    }),
+  }), [
+    audioDeviceState,
+    actionResultMessages,
+    completedActionIds,
+    currentResolutionSummary,
+    language,
+    menuItems,
+    nativeApp,
+    nativeControls,
+    nativeSnapshotReady,
+    pendingActionIds,
+    rowMessages,
+    switches,
+    text,
+    timers,
+  ]);
+
+  useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover') return;
+    updateNativePopover(nativePopoverModel).catch(() => undefined);
+  }, [nativeApp, nativePopoverModel, nativeView]);
+
+  const nativePreferencesModel = useMemo(() => {
+    const copy = PREFERENCES_COPY[language];
+    return {
+      language,
+      appVersion,
+      githubURL: GITHUB_URL,
+      startAtLogin,
+      startAtLoginLoading,
+      startAtLoginError,
+      maxVisible: MAX_VISIBLE_CONTROLS,
+      shortcutMessage: nativePreferencesMessage,
+      shortcutMessageError: nativePreferencesMessageError,
+      strings: copy,
+      rows: orderedIds.map((id) => {
+        const item = SWITCHES.find((candidate) => candidate.id === id);
+        const kind = item?.kind || CONTROL_KINDS.TOGGLE;
+        const kindLabelKey = `control${kind[0].toUpperCase()}${kind.slice(1)}`;
+        return {
+          id,
+          title: text[id]?.[0] || id,
+          kindLabel: copy[kindLabelKey] || '',
+          symbol: NATIVE_SYMBOLS[id] || 'circle',
+          visible: visibleIds.includes(id),
+          shortcut: shortcuts[id] || '',
+          shortcutDisplay: formatShortcut(shortcuts[id] || ''),
+        };
+      }),
+    };
+  }, [
+    appVersion,
+    language,
+    nativePreferencesMessage,
+    nativePreferencesMessageError,
+    orderedIds,
+    shortcuts,
+    startAtLogin,
+    startAtLoginError,
+    startAtLoginLoading,
+    text,
+    visibleIds,
+  ]);
+
+  useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover') return;
+    updateNativePreferences(nativePreferencesModel).catch(() => undefined);
+  }, [nativeApp, nativePreferencesModel, nativeView]);
+
   const preferences = (
     <Preferences
       language={language}
       setLanguage={setLanguage}
-      menuIcon={menuIcon}
-      setMenuIcon={setMenuIcon}
       items={SWITCHES}
       text={text}
       visibleIds={visibleIds}
@@ -858,9 +1342,9 @@ export default function App() {
 
   const popover = (
     <section className="status-popover" aria-label={text.title}>
-      <header className="popover-head" aria-hidden={resolutionPanelOpen || Boolean(timerPanelControlId) || diskPanelOpen}><div className="app-identity"><span className="app-mark"><ToggleRight size={19} /></span><span><strong>{text.title}</strong><small>{text.subtitle}</small></span></div></header>
+      <header className="popover-head" aria-hidden={resolutionPanelOpen || diskPanelOpen}><div className="app-identity"><span className="app-mark"><ToggleRight size={19} /></span><span><strong>{text.title}</strong><small>{text.subtitle}</small></span></div></header>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
-      <div className="switch-list" aria-hidden={resolutionPanelOpen || Boolean(timerPanelControlId) || diskPanelOpen} inert={resolutionPanelOpen || timerPanelControlId || diskPanelOpen ? '' : undefined}>{menuItems.map((item) => {
+      <div className="switch-list" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}>{menuItems.map((item) => {
         const Icon = item.icon;
         const [defaultTitle, defaultDescription] = text[item.id];
         const control = nativeControls?.[item.id];
@@ -868,14 +1352,17 @@ export default function App() {
         const unavailable = Boolean(nativeApp && control && !control.available);
         const stateKnown = !nativeApp || (nativeSnapshotReady && Boolean(control) && control.stateKnown !== false);
         const kind = control?.mode || item.kind;
-        const confirming = confirmingActionId === item.id;
         const completed = completedActionIds.has(item.id);
-        const checked = kind === CONTROL_KINDS.TOGGLE && stateKnown && switches[item.id];
+        const { checked, locked: actionLocked } = controlSwitchState(
+          kind,
+          stateKnown && Boolean(switches[item.id]),
+          { pending, completed },
+        );
         const feedback = rowMessages[item.id];
         const error = typeof feedback === 'string' ? feedback : feedback?.text;
         const recoveryPane = feedback?.recoveryPane || recoveryPaneForError(control?.message);
         const recoverable = Boolean(recoveryPane);
-        const hasError = Boolean(error || (unavailable && control?.message));
+        const hasError = Boolean(error);
         const title = item.id === 'airpods' && audioDeviceState?.paired ? audioDeviceState.name : defaultTitle;
         const unavailableMessage = item.id === 'airpods' ? text.airpodsUnpaired : localiseNativeError(control?.message, language, text);
         const description = item.id === 'airpods'
@@ -883,27 +1370,47 @@ export default function App() {
           : item.id === 'resolution' && currentResolutionSummary
             ? currentResolutionSummary
             : defaultDescription;
-        const timerStatus = timers[item.id] && checked
-          ? formatTimerRemaining(timers[item.id], language)
+        const timerStatus = TIMED_CONTROL_IDS.includes(item.id) && checked
+          ? timers[item.id]
+            ? formatTimerRemaining(timers[item.id], language)
+            : text.timerNone
           : '';
         const status = unavailable
           ? unavailableMessage
           : pending
             ? text.processing
-            : confirming
-              ? text.confirmHint
-              : completed
-                ? text.completed
-                : error || timerStatus || (!stateKnown && kind === CONTROL_KINDS.TOGGLE ? text.unknownState : description);
+            : completed
+              ? actionResultMessages[item.id] || text.completed
+              : error || timerStatus || (!stateKnown && kind === CONTROL_KINDS.TOGGLE ? text.unknownState : description);
         const controlLabel = `${title}: ${status}`;
-        const affordance = recoverable
-          ? <RowAction pending={false} confirming={false} completed={false} disabled={false} onClick={() => recoverPermission(item.id, recoveryPane)} label={`${title}: ${text.openSettings}`} />
-          : kind === CONTROL_KINDS.TOGGLE
-            ? <Toggle checked={checked} loading={pending} disabled={unavailable} stateKnown={stateKnown} onChange={() => activateControl(item.id)} onLongPress={TIMED_CONTROL_IDS.includes(item.id) ? () => { setResolutionPanelOpen(false); setDiskPanelOpen(false); setTimerPanelControlId(item.id); } : undefined} label={controlLabel} />
-            : <RowAction pending={pending} confirming={confirming} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} onLongPress={item.id === 'ejectDisk' ? openDiskPanel : undefined} label={controlLabel} />;
-        return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${confirming ? 'is-confirming' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
+        const affordance = usesSwitchAffordance(kind)
+          ? <Toggle
+              checked={checked}
+              loading={pending}
+              disabled={unavailable || actionLocked}
+              stateKnown={stateKnown}
+              timerTriggerId={TIMED_CONTROL_IDS.includes(item.id) ? item.id : undefined}
+              popoverOpen={timerPanelControlId === item.id}
+              onChange={(trigger) => {
+                if (recoverable) {
+                  recoverPermission(item.id, recoveryPane);
+                  return;
+                }
+                if (kind === CONTROL_KINDS.ACTION || !TIMED_CONTROL_IDS.includes(item.id) || checked) {
+                  closeTimerPopover();
+                  activateControl(item.id);
+                  return;
+                }
+                if (timerPanelControlId === item.id) closeTimerPopover();
+                else openTimerPicker(item.id, trigger);
+              }}
+              onLongPress={item.id === 'ejectDisk' ? openDiskPanel : undefined}
+              label={controlLabel}
+            />
+          : <RowAction pending={pending} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} label={controlLabel} />;
+        return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
       })}</div>
-      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || Boolean(timerPanelControlId) || diskPanelOpen} inert={resolutionPanelOpen || timerPanelControlId || diskPanelOpen ? '' : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={openPreferences}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={openPreferences}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
+      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={openPreferences}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={openPreferences}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
       {resolutionPanelOpen && (
         <ResolutionPanel
           copy={text}
@@ -912,25 +1419,21 @@ export default function App() {
           loading={resolutionLoading}
           error={resolutionError}
           pendingModeKey={pendingResolutionMode}
+          closing={closingSecondaryPanel === 'resolution'}
           onClose={() => {
-            if (!pendingResolutionMode) setResolutionPanelOpen(false);
+            if (!pendingResolutionMode) closeSecondaryPanel('resolution');
           }}
           onRetry={loadDisplayConfiguration}
           onSelectDisplay={setSelectedDisplayId}
           onSelectMode={selectResolutionMode}
         />
       )}
-      {timerPanelControlId && (
+      {!nativeApp && timerPanelControlId && timerPopoverAnchor && (
         <TimerPanel
           controlId={timerPanelControlId}
-          title={text[timerPanelControlId]?.[0] || timerPanelControlId}
-          deadline={timers[timerPanelControlId] || null}
-          language={language}
+          anchor={timerPopoverAnchor}
           copy={text}
-          pending={timerSelectionPending}
-          onClose={() => {
-            if (!timerSelectionPending) setTimerPanelControlId(null);
-          }}
+          onClose={closeTimerPopover}
           onSelect={applyControlTimer}
         />
       )}
@@ -941,8 +1444,9 @@ export default function App() {
           loading={externalDisksLoading}
           error={externalDisksError}
           savingName={savingDiskName}
+          closing={closingSecondaryPanel === 'disk'}
           onClose={() => {
-            if (!savingDiskName) setDiskPanelOpen(false);
+            if (!savingDiskName) closeSecondaryPanel('disk');
           }}
           onRetry={loadExternalDisks}
           onToggle={toggleDiskExclusion}
@@ -965,7 +1469,7 @@ export default function App() {
         <div className="wallpaper-art" aria-hidden="true"><i /><i /><i /></div>
         <header className="menu-bar">
           <div className="menu-left"><span className="apple-mark">●</span><span>Finder</span><span>File</span><span>Edit</span><span>View</span></div>
-          <div className="menu-right"><span>⌁</span><span>◒</span><span>◖</span><span>100%</span><button type="button" className="tray-trigger" aria-label={isOpen ? text.close : text.open} onClick={() => setIsOpen((value) => !value)}><TrayIcon size={16} /></button></div>
+          <div className="menu-right"><span>⌁</span><span>◒</span><span>◖</span><span>100%</span><button type="button" className="tray-trigger" aria-label={isOpen ? text.close : text.open} onClick={() => setIsOpen((value) => !value)}><ToggleRight size={16} /></button></div>
         </header>
         <button type="button" className="ambient-dismiss" aria-label={text.outsideClose} onClick={() => setIsOpen(false)} />
 

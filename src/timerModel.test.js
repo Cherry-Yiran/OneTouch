@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  deadlineForTimerChoice,
   endOfDayDeadline,
   formatTimerRemaining,
   nextTimerDeadline,
   restoreTimers,
+  timerRetryDeadline,
 } from './timerModel.js';
 
 test('restores only supported finite timer deadlines', () => {
@@ -26,4 +28,16 @@ test('end-of-day deadlines stay within the current local day', () => {
   assert.equal(deadline.getDate(), 27);
   assert.equal(deadline.getHours(), 23);
   assert.equal(deadline.getMinutes(), 59);
+});
+
+test('native timer menu choices map to the same timer deadlines', () => {
+  const now = new Date(2026, 6, 30, 12, 0, 0).getTime();
+  assert.equal(deadlineForTimerChoice('30m', now), now + 30 * 60 * 1000);
+  assert.equal(deadlineForTimerChoice('today', now), endOfDayDeadline(now));
+  assert.equal(deadlineForTimerChoice('none', now), null);
+  assert.equal(deadlineForTimerChoice('unknown', now), undefined);
+});
+
+test('a transient timer failure is retried after one minute', () => {
+  assert.equal(timerRetryDeadline(1_000), 61_000);
 });

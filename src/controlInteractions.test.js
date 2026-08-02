@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   CONTROL_KINDS,
   controlKind,
-  requiresConfirmation,
+  controlSwitchState,
+  usesSwitchAffordance,
 } from './controlInteractions.js';
 
 test('classifies persistent controls as toggles', () => {
@@ -18,14 +20,49 @@ test('classifies one-time operations as actions', () => {
   assert.equal(controlKind('emptyTrash'), CONTROL_KINDS.ACTION);
 });
 
+test('persistent and one-time controls share the switch affordance', () => {
+  assert.equal(usesSwitchAffordance(CONTROL_KINDS.TOGGLE), true);
+  assert.equal(usesSwitchAffordance(CONTROL_KINDS.ACTION), true);
+  assert.equal(usesSwitchAffordance(CONTROL_KINDS.CHOICE), false);
+  assert.equal(usesSwitchAffordance(CONTROL_KINDS.SETTINGS), false);
+});
+
 test('classifies direct system selections as choices', () => {
   assert.equal(controlKind('resolution'), CONTROL_KINDS.CHOICE);
 });
 
-test('only potentially destructive actions require confirmation', () => {
+test('one-time actions use the same direct switch interaction', () => {
   for (const id of ['xcodeClean', 'emptyTrash', 'ejectDisk', 'clipboard']) {
-    assert.equal(requiresConfirmation(id), true);
+    assert.equal(controlKind(id), CONTROL_KINDS.ACTION);
+    assert.equal(usesSwitchAffordance(controlKind(id)), true);
   }
-  assert.equal(requiresConfirmation('screenSaver'), false);
-  assert.equal(requiresConfirmation('darkMode'), false);
+});
+
+test('one-time action stays on only while processing, then turns off for its result', () => {
+  assert.deepEqual(
+    controlSwitchState(CONTROL_KINDS.ACTION, false),
+    { checked: false, locked: false },
+  );
+  assert.deepEqual(
+    controlSwitchState(CONTROL_KINDS.ACTION, false, { pending: true }),
+    { checked: true, locked: true },
+  );
+  assert.deepEqual(
+    controlSwitchState(CONTROL_KINDS.ACTION, false, { completed: true }),
+    { checked: false, locked: true },
+  );
+  assert.deepEqual(
+    controlSwitchState(CONTROL_KINDS.ACTION, false),
+    { checked: false, locked: false },
+  );
+});
+
+test('the app never gates a one-time switch behind a second confirmation click', () => {
+  const appSource = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(appSource, /requiresConfirmation|confirmingActionId/);
+  assert.match(appSource, /MIN_ACTION_PROGRESS_MS/);
+  assert.match(appSource, /COMPLETION_FEEDBACK_MS/);
+  assert.match(appSource, /正在处理中…/);
+  assert.match(appSource, /trash-already-empty/);
+  assert.match(appSource, /垃圾桶已经空了/);
 });

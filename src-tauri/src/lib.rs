@@ -3,10 +3,13 @@ use std::{
     ffi::{CStr, CString},
     env, fs,
     io::Read,
-    os::raw::{c_char, c_int},
+    os::raw::{c_char, c_int, c_void},
     path::Path,
     process::{Child, Command, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -15,12 +18,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
-    window::{Effect, EffectState, EffectsBuilder},
-    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect,
-    TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 #[cfg(not(target_os = "macos"))]
-use tauri::{image::Image, tray::TrayIconBuilder};
+use tauri::{
+    image::Image,
+    tray::TrayIconBuilder,
+    window::{Effect, EffectState, EffectsBuilder},
+    TitleBarStyle,
+};
 
 const ALL_CONTROL_IDS: [&str; 28] = [
     "desktop", "darkMode", "awake", "airpods", "dnd", "nightShift", "screenSaver",
@@ -29,6 +36,8 @@ const ALL_CONTROL_IDS: [&str; 28] = [
     "spotify", "hiddenFiles", "displaySleep", "resolution", "hideWidgets",
     "stageManager", "cleanScreen", "lockKeyboard", "lockScreen",
 ];
+// Keep the legacy preferences domain so the clean OneTouch bundle identity
+// does not reset the user's selected controls, order, timers, or settings.
 const PREFERENCES_DOMAIN: &str = "design.ryan.switchboard.menubar.v2";
 const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
 const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
@@ -38,8 +47,36 @@ unsafe extern "C" {
     fn sb_status_item_create(
         callback: Option<extern "C" fn(x: f64, y: f64, width: f64, height: f64)>,
     ) -> c_int;
-    fn sb_status_item_set_icon_kind(kind: *const c_char) -> c_int;
     fn sb_status_item_is_visible() -> c_int;
+    fn sb_native_popover_create(
+        callback: Option<
+            extern "C" fn(action: *const c_char, control_id: *const c_char, value: c_int),
+        >,
+    ) -> c_int;
+    fn sb_native_popover_update_json(model_json: *const c_char) -> c_int;
+    fn sb_native_popover_show() -> c_int;
+    fn sb_native_popover_show_persistent() -> c_int;
+    fn sb_native_popover_toggle() -> c_int;
+    fn sb_native_popover_hide();
+    fn sb_native_popover_hide_for_app_window();
+    fn sb_native_restore_previous_application();
+    fn sb_native_preferences_create(
+        callback: Option<
+            extern "C" fn(
+                action: *const c_char,
+                control_id: *const c_char,
+                payload: *const c_char,
+            ),
+        >,
+    ) -> c_int;
+    fn sb_native_preferences_update_json(model_json: *const c_char) -> c_int;
+    fn sb_native_preferences_show() -> c_int;
+    fn sb_timer_menu_show(
+        window_pointer: *mut c_void,
+        anchor_right: f64,
+        anchor_bottom: f64,
+        use_chinese: c_int,
+    ) -> c_int;
     fn sb_display_configuration_json() -> *mut c_char;
     fn sb_display_set_mode(
         display_id: u32,
@@ -188,112 +225,33 @@ struct SwitchResult {
     message: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePopoverAction {
+    action: String,
+    control_id: String,
+    value: i32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePreferencesAction {
+    action: String,
+    control_id: String,
+    payload: String,
+}
+
 #[cfg(not(target_os = "macos"))]
 const TRAY_COMMAND_ICON: Image<'static> = tauri::include_image!("./icons/tray-command-lime.png");
 #[cfg(not(target_os = "macos"))]
-const TRAY_GRID_ICON: Image<'static> = tauri::include_image!("./icons/tray-grid-lime.png");
-#[cfg(not(target_os = "macos"))]
-const TRAY_BOLT_ICON: Image<'static> = tauri::include_image!("./icons/tray-bolt-lime.png");
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PopoverSurface {
-    LiquidGlass,
-    VibrancyFallback,
-}
-
-const POPOVER_CORNER_RADIUS: f64 = 20.0;
-
-fn preferred_popover_surface(liquid_glass_available: bool) -> PopoverSurface {
-    if liquid_glass_available {
-        PopoverSurface::LiquidGlass
-    } else {
-        PopoverSurface::VibrancyFallback
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn prepare_native_popover_window(window: &WebviewWindow) -> bool {
-    use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSColor, NSGlassEffectView, NSGlassEffectViewStyle, NSView,
-        NSWindow,
-    };
-    use objc2::{runtime::AnyClass, ClassType};
-    use objc2_foundation::{MainThreadMarker, NSObjectProtocol};
-    use objc2_quartz_core::kCACornerCurveContinuous;
-
-    unsafe fn apply_rounded_clip(view: &NSView) {
-        view.setWantsLayer(true);
-        if let Some(layer) = view.layer() {
-            layer.setCornerRadius(POPOVER_CORNER_RADIUS);
-            layer.setCornerCurve(kCACornerCurveContinuous);
-            layer.setMasksToBounds(true);
-        }
-    }
-
-    let Some(mtm) = MainThreadMarker::new() else {
-        return false;
-    };
-    if AnyClass::get(c"NSGlassEffectView").is_none() {
-        return false;
-    }
-    let Ok(native_window) = window.ns_window() else {
-        return false;
-    };
-
-    unsafe {
-        let native_window: &NSWindow = &*native_window.cast();
-        native_window.setOpaque(false);
-        native_window.setBackgroundColor(Some(&NSColor::clearColor()));
-        native_window.setHasShadow(false);
-
-        let Some(content_root) = native_window.contentView() else {
-            return false;
-        };
-
-        // NSGlassEffectView's cornerRadius only shapes its own material. The layer
-        // mask is what prevents the rectangular WebView host from showing through
-        // at the corners. Reapply it when a cached popover window is reused.
-        apply_rounded_clip(&content_root);
-        if content_root.isKindOfClass(NSGlassEffectView::class()) {
-            return true;
-        }
-
-        let glass = NSGlassEffectView::new(mtm);
-        glass.setFrame(content_root.frame());
-        glass.setStyle(NSGlassEffectViewStyle::Regular);
-        glass.setCornerRadius(POPOVER_CORNER_RADIUS);
-        glass.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        apply_rounded_clip(&glass);
-        content_root.setFrame(glass.bounds());
-        content_root.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-
-        native_window.setContentView(Some(&glass));
-        glass.setContentView(Some(&content_root));
-    }
-
-    true
-}
-
-fn configure_popover_surface(window: &WebviewWindow) -> tauri::Result<PopoverSurface> {
-    #[cfg(target_os = "macos")]
-    if prepare_native_popover_window(window) {
-        return Ok(preferred_popover_surface(true));
-    }
-
+fn configure_popover_surface(window: &WebviewWindow) -> tauri::Result<()> {
     window.set_effects(
         EffectsBuilder::new()
             .effect(Effect::Popover)
             .state(EffectState::Active)
-            .radius(POPOVER_CORNER_RADIUS)
             .build(),
     )?;
-    Ok(preferred_popover_surface(false))
+    Ok(())
 }
 
 #[derive(Default)]
@@ -304,41 +262,64 @@ struct NativeState {
     spotify_playing: Mutex<Option<bool>>,
     airpods_operation: Mutex<()>,
     tray_anchor: Mutex<Option<Rect>>,
+    native_menu_active: Mutex<bool>,
 }
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+// The native surface is activated only after its controller supplies a full model.
+static NATIVE_POPOVER_MODEL_READY: AtomicBool = AtomicBool::new(false);
 
-#[cfg(not(target_os = "macos"))]
-fn menu_bar_icon(kind: &str) -> Image<'static> {
-    match kind {
-        "dots" => TRAY_GRID_ICON.clone(),
-        "bolt" => TRAY_BOLT_ICON.clone(),
-        _ => TRAY_COMMAND_ICON.clone(),
+fn timer_menu_choice(selection: c_int) -> Option<&'static str> {
+    match selection {
+        0 => Some("30m"),
+        1 => Some("1h"),
+        2 => Some("2h"),
+        3 => Some("4h"),
+        4 => Some("today"),
+        5 => Some("none"),
+        _ => None,
     }
 }
 
 #[tauri::command]
-fn set_menu_icon(_app: AppHandle, icon: String) -> Result<(), String> {
+fn show_timer_menu(
+    app: AppHandle,
+    window: WebviewWindow,
+    anchor_right: f64,
+    anchor_bottom: f64,
+    language: String,
+) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
-        let icon = CString::new(icon)
-            .map_err(|_| "The menu bar icon name contains invalid characters".to_string())?;
-        let result = unsafe { sb_status_item_set_icon_kind(icon.as_ptr()) };
-        return if result == 0 {
-            Ok(())
-        } else {
-            Err("Unable to update the native menu bar icon".to_string())
+        let native_window = window
+            .ns_window()
+            .map_err(|error| format!("The native OneTouch window is unavailable: {error}"))?;
+        if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
+            *active = true;
+        }
+        let selection = unsafe {
+            sb_timer_menu_show(
+                native_window,
+                anchor_right,
+                anchor_bottom,
+                c_int::from(language == "zh"),
+            )
         };
+        if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
+            *active = false;
+        }
+        let _ = window.set_focus();
+        if selection == -2 {
+            return Err("macOS could not present the native timer menu".to_string());
+        }
+        return Ok(timer_menu_choice(selection).map(str::to_string));
     }
 
     #[cfg(not(target_os = "macos"))]
-    let tray = _app
-        .tray_by_id("switchboard-tray")
-        .ok_or_else(|| "The menu bar icon is unavailable".to_string())?;
-
-    #[cfg(not(target_os = "macos"))]
-    tray.set_icon_with_as_template(Some(menu_bar_icon(&icon)), false)
-        .map_err(|error| format!("Unable to update the menu bar icon: {error}"))
+    {
+        let _ = (app, window, anchor_right, anchor_bottom, language);
+        Ok(None)
+    }
 }
 
 fn run_process(program: &str, args: &[&str]) -> Result<(), String> {
@@ -1181,8 +1162,25 @@ tell application "Finder"
 end tell
 "#;
 
-fn empty_trash() -> Result<(), String> {
-    run_osascript(EMPTY_TRASH_SCRIPT)
+const EMPTY_TRASH_COUNT_SCRIPT: &str =
+    "tell application \"Finder\" to count items of trash";
+
+fn empty_trash() -> Result<bool, String> {
+    let already_empty = read_process_with_timeout(
+        "/usr/bin/osascript",
+        &["-e", EMPTY_TRASH_COUNT_SCRIPT],
+        Duration::from_secs(6),
+    )
+    .is_some_and(|count| count.trim() == "0");
+    if already_empty {
+        return Ok(true);
+    }
+    run_osascript(EMPTY_TRASH_SCRIPT)?;
+    Ok(false)
+}
+
+fn empty_trash_result_message(already_empty: bool) -> Option<String> {
+    already_empty.then(|| "trash-already-empty".to_string())
 }
 
 fn external_disk_ids(output: &str) -> Vec<String> {
@@ -1206,6 +1204,30 @@ fn external_disk_name(output: &str) -> Option<String> {
                     .filter(|value| !value.is_empty() && value != "Not applicable")
             })
         })
+}
+
+fn external_disk_list() -> Result<Vec<String>, String> {
+    let output = Command::new("/usr/sbin/diskutil")
+        .args(["list", "external", "physical"])
+        .output()
+        .map_err(|error| format!("Unable to inspect external disks: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(external_disk_ids(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn external_disk_control_status(
+    disks: &Result<Vec<String>, String>,
+) -> (bool, Option<String>) {
+    match disks {
+        Ok(disks) if !disks.is_empty() => (true, None),
+        Ok(_) => (
+            false,
+            Some("No external disks are connected".to_string()),
+        ),
+        Err(error) => (false, Some(error.clone())),
+    }
 }
 
 fn saved_eject_exclusions() -> HashSet<String> {
@@ -1235,15 +1257,8 @@ fn save_eject_exclusions(exclusions: &[String]) -> Result<(), String> {
 }
 
 fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
-    let output = Command::new("/usr/sbin/diskutil")
-        .args(["list", "external", "physical"])
-        .output()
-        .map_err(|error| format!("Unable to inspect external disks: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
     let exclusions = saved_eject_exclusions();
-    Ok(external_disk_ids(&String::from_utf8_lossy(&output.stdout))
+    Ok(external_disk_list()?
         .into_iter()
         .map(|id| {
             let name = read_process_with_timeout(
@@ -1320,6 +1335,7 @@ fn set_switch_blocking(
         None
     };
 
+    let mut result_message = None;
     let operation = match id.as_str() {
         "awake" => set_awake(enabled, state),
         "desktop" => set_desktop_hidden(enabled),
@@ -1340,7 +1356,9 @@ fn set_switch_blocking(
         "frontApp" => Ok(()),
         "xcodeClean" if enabled => clean_xcode_derived_data(),
         "xcodeClean" => Ok(()),
-        "emptyTrash" if enabled => empty_trash(),
+        "emptyTrash" if enabled => empty_trash().map(|already_empty| {
+            result_message = empty_trash_result_message(already_empty);
+        }),
         "emptyTrash" => Ok(()),
         "ejectDisk" if enabled => eject_external_disks(),
         "ejectDisk" => Ok(()),
@@ -1373,7 +1391,7 @@ fn set_switch_blocking(
         state: result_state,
         state_known: true,
         mode,
-        message: None,
+        message: result_message,
     })
 }
 
@@ -1487,6 +1505,9 @@ fn native_state_values(
 
 fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
     let audio_device = native_audio_device_snapshot();
+    let external_disks = external_disk_list();
+    let (external_disks_available, external_disks_message) =
+        external_disk_control_status(&external_disks);
     let (values, music_state_known, spotify_state_known) =
         native_state_values(state, &audio_device);
     let controls = ALL_CONTROL_IDS
@@ -1506,6 +1527,7 @@ fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
                 Ok(None) => {
                     let available = match id {
                         "airpods" => audio_device.paired,
+                        "ejectDisk" => external_disks_available,
                         "spotify" => spotify_available(),
                         _ => true,
                     };
@@ -1516,6 +1538,7 @@ fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
                         "spotify" if !available => {
                             Some("Spotify is not installed on this Mac".to_string())
                         }
+                        "ejectDisk" if !available => external_disks_message.clone(),
                         _ => None,
                     };
                     (
@@ -1610,24 +1633,52 @@ async fn set_display_mode(
 
 #[tauri::command]
 fn open_preferences(app: AppHandle) -> Result<(), String> {
-    if let Some(popover) = app.get_webview_window("popover") {
-        let _ = popover.hide();
+    #[cfg(target_os = "macos")]
+    {
+        unsafe {
+            sb_native_popover_hide_for_app_window();
+        }
+        if let Some(popover) = app.get_webview_window("popover") {
+            let _ = popover.hide();
+        }
+        let result = unsafe { sb_native_preferences_show() };
+        return if result == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "macOS could not show the native OneTouch settings window ({result})"
+            ))
+        };
     }
 
-    let preferences = app
-        .get_webview_window("preferences")
-        .ok_or_else(|| "Preferences window is unavailable".to_string())?;
-    preferences
-        .set_size(LogicalSize::new(510.0, 540.0))
-        .map_err(|error| error.to_string())?;
-    preferences.center().map_err(|error| error.to_string())?;
-    preferences.show().map_err(|error| error.to_string())?;
-    preferences.set_focus().map_err(|error| error.to_string())
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(popover) = app.get_webview_window("popover") {
+            let _ = popover.hide();
+        }
+        let preferences = app
+            .get_webview_window("preferences")
+            .ok_or_else(|| "Preferences window is unavailable".to_string())?;
+        preferences
+            .set_size(LogicalSize::new(510.0, 540.0))
+            .map_err(|error| error.to_string())?;
+        preferences.center().map_err(|error| error.to_string())?;
+        preferences.show().map_err(|error| error.to_string())?;
+        preferences.set_focus().map_err(|error| error.to_string())
+    }
 }
 
 #[tauri::command]
 fn hide_current_window(window: WebviewWindow) -> Result<(), String> {
-    window.hide().map_err(|error| error.to_string())
+    let restore_previous_application = window.label() == "preferences";
+    window.hide().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    if restore_previous_application {
+        unsafe {
+            sb_native_restore_previous_application();
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1665,6 +1716,70 @@ fn resize_popover(app: AppHandle, item_count: usize) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn update_native_popover(model: Value) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let json = serde_json::to_string(&model).map_err(|error| error.to_string())?;
+        let json = CString::new(json)
+            .map_err(|_| "The native popover model contains an invalid null byte".to_string())?;
+        let result = unsafe { sb_native_popover_update_json(json.as_ptr()) };
+        if result != 0 {
+            return Err(format!(
+                "macOS could not update the native OneTouch popover ({result})"
+            ));
+        }
+        let native_model_was_ready =
+            NATIVE_POPOVER_MODEL_READY.swap(true, Ordering::AcqRel);
+        if let Some(app) = APP_HANDLE.get() {
+            if let Some(window) = app.get_webview_window("popover") {
+                if !native_model_was_ready && window.is_visible().unwrap_or(false) {
+                    let _ = window.hide();
+                    let native_result =
+                        if env::var_os("ONETOUCH_SHOW_NATIVE_POPOVER").is_some() {
+                            unsafe { sb_native_popover_show_persistent() }
+                        } else {
+                            unsafe { sb_native_popover_show() }
+                        };
+                    if native_result == 0 {
+                        if let Ok(mut active) =
+                            app.state::<NativeState>().native_menu_active.lock()
+                        {
+                            *active = false;
+                        }
+                    } else {
+                        if let Ok(mut active) =
+                            app.state::<NativeState>().native_menu_active.lock()
+                        {
+                            *active = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = model;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_native_preferences(model: Value) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let json = serde_json::to_string(&model).map_err(|error| error.to_string())?;
+        let json = CString::new(json)
+            .map_err(|_| "The native settings model contains an invalid null byte".to_string())?;
+        let result = unsafe { sb_native_preferences_update_json(json.as_ptr()) };
+        if result != 0 {
+            return Err(format!(
+                "macOS could not update the native OneTouch settings window ({result})"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn position_popover(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -1688,6 +1803,8 @@ fn position_popover(
         });
 
     let Some(tray_rect) = tray_rect else {
+        // Never invent a top-right anchor: a popover that is not attached to
+        // its status item looks like an unrelated floating window.
         return;
     };
 
@@ -1756,6 +1873,37 @@ fn show_popover_with_native_animation(_window: &WebviewWindow) -> bool {
 
 #[tauri::command]
 fn show_popover(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let result = unsafe { sb_native_popover_show() };
+        if result == 0 {
+            if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
+                *active = false;
+            }
+            return Ok(());
+        }
+        return Err("OneTouch menu bar icon does not have a screen anchor".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+    let window = app
+        .get_webview_window("popover")
+        .ok_or_else(|| "The popover window is unavailable".to_string())?;
+    position_popover(&app, &window, None);
+    if !show_popover_with_native_animation(&window) {
+        window.show().map_err(|error| error.to_string())?;
+    }
+    window.set_focus().map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+fn show_legacy_popover(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        sb_native_popover_hide();
+    }
     let window = app
         .get_webview_window("popover")
         .ok_or_else(|| "The popover window is unavailable".to_string())?;
@@ -1802,11 +1950,87 @@ extern "C" fn native_status_item_clicked(x: f64, y: f64, width: f64, height: f64
     if let Ok(mut stored_anchor) = app.state::<NativeState>().tray_anchor.lock() {
         *stored_anchor = Some(anchor_rect);
     }
-    toggle_popover(app, anchor_rect);
+    let _ = app.emit_to(
+        "popover",
+        "native-popover-action",
+        NativePopoverAction {
+            action: "refresh".to_string(),
+            control_id: String::new(),
+            value: 0,
+        },
+    );
+    if let Some(window) = app.get_webview_window("popover") {
+        let _ = window.hide();
+    }
+    // The Objective-C controller always exists before the status item can be
+    // clicked. Show its loading model if React has not supplied live state yet;
+    // never fall back to a decorated WebView on macOS.
+    let _ = unsafe { sb_native_popover_toggle() };
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn native_popover_action(
+    action: *const c_char,
+    control_id: *const c_char,
+    value: c_int,
+) {
+    if action.is_null() || control_id.is_null() {
+        return;
+    }
+    let Some(app) = APP_HANDLE.get() else {
+        return;
+    };
+    let action = unsafe { CStr::from_ptr(action) }
+        .to_string_lossy()
+        .into_owned();
+    let control_id = unsafe { CStr::from_ptr(control_id) }
+        .to_string_lossy()
+        .into_owned();
+    let _ = app.emit_to(
+        "popover",
+        "native-popover-action",
+        NativePopoverAction {
+            action,
+            control_id,
+            value,
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn native_preferences_action(
+    action: *const c_char,
+    control_id: *const c_char,
+    payload: *const c_char,
+) {
+    if action.is_null() || control_id.is_null() || payload.is_null() {
+        return;
+    }
+    let Some(app) = APP_HANDLE.get() else {
+        return;
+    };
+    let action = unsafe { CStr::from_ptr(action) }
+        .to_string_lossy()
+        .into_owned();
+    let control_id = unsafe { CStr::from_ptr(control_id) }
+        .to_string_lossy()
+        .into_owned();
+    let payload = unsafe { CStr::from_ptr(payload) }
+        .to_string_lossy()
+        .into_owned();
+    let _ = app.emit_to(
+        "popover",
+        "native-preferences-action",
+        NativePreferencesAction {
+            action,
+            control_id,
+            payload,
+        },
+    );
 }
 
 fn create_windows(app: &tauri::App) -> tauri::Result<()> {
-    let popover = WebviewWindowBuilder::new(
+    let popover_model_host = WebviewWindowBuilder::new(
         app,
         "popover",
         WebviewUrl::App("index.html?view=popover".into()),
@@ -1821,23 +2045,29 @@ fn create_windows(app: &tauri::App) -> tauri::Result<()> {
     .skip_taskbar(true)
     .visible(false)
     .build()?;
-    let _surface = configure_popover_surface(&popover)?;
+    #[cfg(not(target_os = "macos"))]
+    configure_popover_surface(&popover_model_host)?;
+    #[cfg(target_os = "macos")]
+    let _ = popover_model_host;
 
-    WebviewWindowBuilder::new(
-        app,
-        "preferences",
-        WebviewUrl::App("index.html?view=preferences".into()),
-    )
-    .title("OneTouch Preferences")
-    .inner_size(510.0, 540.0)
-    .min_inner_size(500.0, 500.0)
-    .resizable(true)
-    .decorations(true)
-    .title_bar_style(TitleBarStyle::Overlay)
-    .hidden_title(true)
-    .transparent(true)
-    .visible(false)
-    .build()?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        WebviewWindowBuilder::new(
+            app,
+            "preferences",
+            WebviewUrl::App("index.html?view=preferences".into()),
+        )
+        .title("OneTouch Preferences")
+        .inner_size(510.0, 540.0)
+        .min_inner_size(500.0, 500.0)
+        .resizable(true)
+        .decorations(true)
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .transparent(true)
+        .visible(false)
+        .build()?;
+    }
 
     Ok(())
 }
@@ -1863,7 +2093,10 @@ pub fn run() {
             quit_app,
             resize_popover,
             show_popover,
-            set_menu_icon,
+            show_legacy_popover,
+            update_native_popover,
+            update_native_preferences,
+            show_timer_menu,
             open_system_settings
         ])
         .on_tray_icon_event(|app, event| {
@@ -1878,8 +2111,6 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            create_windows(app)?;
-
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -1899,11 +2130,44 @@ pub fn run() {
                     )
                     .into());
                 }
+                let popover_result =
+                    unsafe { sb_native_popover_create(Some(native_popover_action)) };
+                if popover_result != 0 {
+                    return Err(std::io::Error::other(
+                        "macOS did not create the native OneTouch popover",
+                    )
+                    .into());
+                }
+                let preferences_result =
+                    unsafe { sb_native_preferences_create(Some(native_preferences_action)) };
+                if preferences_result != 0 {
+                    return Err(std::io::Error::other(
+                        "macOS did not create the native OneTouch settings window",
+                    )
+                    .into());
+                }
+            }
+
+            create_windows(app)?;
+
+            #[cfg(target_os = "macos")]
+            if env::var_os("ONETOUCH_SHOW_NATIVE_POPOVER").is_some() {
+                if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
+                    *active = true;
+                }
+                let app = app.handle().clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(500));
+                    if let Some(window) = app.get_webview_window("popover") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
             }
 
             #[cfg(not(target_os = "macos"))]
             TrayIconBuilder::with_id("switchboard-tray")
-                .icon(menu_bar_icon("command"))
+                .icon(TRAY_COMMAND_ICON.clone())
                 .icon_as_template(false)
                 .show_menu_on_left_click(false)
                 .tooltip("OneTouch")
@@ -1915,14 +2179,35 @@ pub fn run() {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
+                #[cfg(target_os = "macos")]
+                if window.label() == "preferences" {
+                    unsafe {
+                        sb_native_restore_previous_application();
+                    }
+                }
             }
             WindowEvent::Focused(false) if window.label() == "popover" => {
-                let _ = window.hide();
+                let native_menu_active = window
+                    .app_handle()
+                    .state::<NativeState>()
+                    .native_menu_active
+                    .lock()
+                    .map(|active| *active)
+                    .unwrap_or(false);
+                if !native_menu_active {
+                    let _ = window.hide();
+                }
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running OneTouch");
+        .build(tauri::generate_context!())
+        .expect("error while building OneTouch")
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                let _ = show_popover(app_handle.clone());
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1930,9 +2215,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        control_mode, external_disk_ids, external_disk_name, find_audio_device_battery,
-        preferred_popover_surface, parse_defaults_bool, run_process_with_timeout, snapshot_state_known,
-        system_settings_url, PopoverSurface,
+        control_mode, external_disk_control_status, external_disk_ids, external_disk_name,
+        find_audio_device_battery, parse_defaults_bool, run_process_with_timeout,
+        snapshot_state_known, system_settings_url, timer_menu_choice,
     };
 
     #[test]
@@ -1947,6 +2232,21 @@ mod tests {
     }
 
     #[test]
+    fn disables_eject_when_no_external_disk_is_connected() {
+        assert_eq!(
+            external_disk_control_status(&Ok(Vec::new())),
+            (
+                false,
+                Some("No external disks are connected".to_string())
+            )
+        );
+        assert_eq!(
+            external_disk_control_status(&Ok(vec!["/dev/disk4".to_string()])),
+            (true, None)
+        );
+    }
+
+    #[test]
     fn reads_external_disk_media_name() {
         let output = "   Device Identifier:        disk4\n   Device / Media Name:      Samsung Portable SSD\n";
         assert_eq!(
@@ -1957,12 +2257,305 @@ mod tests {
 
     #[test]
     fn empty_trash_action_is_idempotent_and_race_safe() {
+        assert!(super::EMPTY_TRASH_COUNT_SCRIPT.contains("count items of trash"));
         assert!(super::EMPTY_TRASH_SCRIPT.contains(
             "if (count of items of trash) is 0 then return"
         ));
         assert!(super::EMPTY_TRASH_SCRIPT.contains(
             "if (count of items of trash) is not 0 then error"
         ));
+        assert_eq!(
+            super::empty_trash_result_message(true).as_deref(),
+            Some("trash-already-empty")
+        );
+        assert_eq!(super::empty_trash_result_message(false), None);
+    }
+
+    #[test]
+    fn keyboard_cleaning_filters_normal_modifier_and_media_keys() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("CGEventMaskBit(kCGEventKeyDown)"));
+        assert!(helper.contains("CGEventMaskBit(kCGEventKeyUp)"));
+        assert!(helper.contains("CGEventMaskBit(kCGEventFlagsChanged)"));
+        assert!(helper.contains("CGEventMaskBit((CGEventType)NX_SYSDEFINED)"));
+        assert!(!helper.contains("SBIsEmergencyShortcut"));
+    }
+
+    #[test]
+    fn native_timer_menu_uses_appkit_and_maps_every_duration() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("NSMenu *menu"));
+        assert!(helper.contains("popUpMenuPositioningItem"));
+        assert_eq!(timer_menu_choice(0), Some("30m"));
+        assert_eq!(timer_menu_choice(4), Some("today"));
+        assert_eq!(timer_menu_choice(5), Some("none"));
+        assert_eq!(timer_menu_choice(-1), None);
+    }
+
+    #[test]
+    fn native_status_item_avoids_broken_layout_restore_and_automatic_termination() {
+        let helper = include_str!("macos_helper.m");
+        assert!(!helper.contains("autosaveName ="));
+        assert!(!helper.contains("NSStatusItem Visible "));
+        assert!(!helper.contains("NSStatusItem VisibleCC "));
+        assert!(!helper.contains("primary-status-item"));
+        assert!(helper.contains("statusItemWithLength:24.0"));
+        assert!(!helper.contains("SBStatusItem.length ="));
+        assert!(helper.contains("initWithString:@\"P\""));
+        assert!(helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
+        assert!(helper.contains("@interface SBPassthroughImageView"));
+        assert!(!helper.contains("_setDropPriority:"));
+        assert!(!helper.contains("SBStatusItem.visible = YES"));
+        assert!(helper.contains("disableAutomaticTermination"));
+        assert!(helper.contains("disableSuddenTermination"));
+    }
+
+    #[test]
+    fn hidden_status_item_never_opens_an_unanchored_window() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("SBStatusItemHasScreenAnchor"));
+        assert!(helper.contains("menuBarFloor"));
+        assert!(helper.contains("result = -2"));
+
+        let source = include_str!("lib.rs");
+        assert!(source.contains("tauri::RunEvent::Reopen"));
+        assert!(source.contains("menu bar icon does not have a screen anchor"));
+        assert!(source.contains("Never invent a top-right anchor"));
+        assert!(source.contains("NATIVE_POPOVER_MODEL_READY.swap(true"));
+        assert!(source.contains("if native_result == 0"));
+    }
+
+    #[test]
+    fn native_arrowless_panel_uses_system_chrome_and_preserves_content_alignment() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("NSView *rootView = self.contentHostView ?: self.view"));
+        assert!(helper.contains("rootView.subviews.copy"));
+        assert!(!helper.contains("[rootView layoutSubtreeIfNeeded]"));
+        assert!(helper.contains(
+            "if (!NSEqualSizes(SBNativePopoverPanel.contentView.frame.size, targetSize))"
+        ));
+        assert!(!helper.contains("rootView.frame ="));
+        assert!(!helper.contains("[self loadView]"));
+        assert!(helper.contains("SBActivateForNativePopover"));
+        assert!(helper.contains("[NSApp activateIgnoringOtherApps:YES]"));
+        assert!(helper.contains("static __strong NSPanel *SBNativePopoverPanel"));
+        assert!(helper.contains("SBNativePopoverPanelWindow : NSPanel"));
+        assert!(helper.contains("NSWindowStyleMaskTitled"));
+        assert!(helper.contains("NSWindowStyleMaskFullSizeContentView"));
+        assert!(helper.contains("NSWindowStyleMaskNonactivatingPanel"));
+        assert!(helper.contains("NSGlassEffectViewStyleRegular"));
+        assert!(helper.contains("glass.tintColor = nil"));
+        assert!(helper.contains("NSVisualEffectMaterialPopover"));
+        assert!(helper.contains("NSVisualEffectBlendingModeBehindWindow"));
+        assert!(helper.contains("SBPositionNativePopoverPanel"));
+        assert!(helper.contains("NSMidX(anchorFrame)"));
+        assert!(helper.contains("CGFloat top = NSMinY(anchorFrame);"));
+        assert!(!helper.contains("SBNativePanelGap"));
+        assert!(helper.contains("setFrameTopLeftPoint"));
+        assert!(helper.contains("SBNativePopoverLocalEventMonitor"));
+        assert!(helper.contains("SBNativePopoverGlobalEventMonitor"));
+        assert!(helper.contains("event.keyCode == 53"));
+        assert!(!helper.contains("showRelativeToRect:"));
+        assert!(!helper.contains("NSPopoverBehaviorTransient"));
+        assert!(!helper.contains("layer.cornerRadius"));
+        assert!(!helper.contains("SBSeparator"));
+        assert!(helper.contains("separator.boxType = NSBoxSeparator"));
+        assert!(helper.contains("2.0 * SBNativeSeparatorHeight"));
+        assert!(helper.contains("rows.count * SBNativeRowHeight"));
+        assert!(helper.contains("NSGlassEffectView *glass"));
+        assert!(!helper.contains("NSAppearanceNameDarkAqua"));
+        assert!(!helper.contains("[NSColor colorWithWhite:0.02 alpha:0.30]"));
+        assert!(!helper.contains("surfaceColor"));
+        assert!(helper.contains(
+            "[kind isEqualToString:@\"toggle\"] || [kind isEqualToString:@\"action\"]"
+        ));
+        assert!(!helper.contains(
+            "if (pending && ![kind isEqualToString:@\"action\"])"
+        ));
+        assert!(!helper.contains("if (self.momentary &&"));
+        assert!(helper.contains(
+            "toggle.state = active ? NSControlStateValueOn : NSControlStateValueOff"
+        ));
+        assert!(helper.contains("[(NSSwitch *)toggle.animator setState:desiredState]"));
+        assert!(helper.contains("BOOL canUpdateInPlace"));
+        assert!(helper.contains("[self updateRow:row"));
+        assert!(helper.contains("toggle.enabled = enabled && !busy"));
+        assert!(!helper.contains("SBInteractionShieldView"));
+        assert!(helper.contains(
+            "affordance.trailingAnchor constraintEqualToAnchor:controlColumn.trailingAnchor"
+        ));
+        assert!(!helper.contains(
+            "affordance.centerXAnchor constraintEqualToAnchor:controlColumn.centerXAnchor"
+        ));
+        assert!(helper.contains(
+            "SBEmitNativePopoverAction(@\"state\", @\"cleanScreen\", 0)"
+        ));
+        assert!(helper.contains("SBHideNativePopover"));
+        assert!(helper.contains("SBRestorePreviousApplicationAfterPopover"));
+        assert!(helper.contains("stack.alignment = NSLayoutAttributeLeading"));
+        assert!(helper.contains(
+            "view.widthAnchor constraintEqualToAnchor:stack.widthAnchor"
+        ));
+        assert!(!helper.contains("stack.alignment = NSLayoutAttributeWidth"));
+        assert!(helper.contains("SBNativeControlColumnWidth = 64.0"));
+        assert!(helper.contains(
+            "copy.trailingAnchor constraintLessThanOrEqualToAnchor:controlColumn.leadingAnchor"
+        ));
+        assert!(helper.contains(
+            "controlColumn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor"
+        ));
+        assert!(helper.contains(
+            "settings.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor"
+        ));
+        assert!(helper.contains(
+            "customise.leadingAnchor constraintEqualToAnchor:settings.trailingAnchor"
+        ));
+        assert!(helper.contains(
+            "customise.trailingAnchor constraintEqualToAnchor:quit.leadingAnchor"
+        ));
+        assert!(!helper.contains("customise.centerXAnchor"));
+        assert!(!helper.contains("customise.widthAnchor constraintGreaterThanOrEqualToConstant"));
+        assert!(
+            helper
+                .matches("bezelStyle = NSBezelStyleAccessoryBarAction")
+                .count()
+                >= 3
+        );
+        assert!(helper.contains("buttonType = NSButtonTypeMomentaryPushIn"));
+        assert!(!helper.contains("@interface SBNativeFooterButton : NSButton"));
+        assert!(!helper.contains("NSTrackingMouseEnteredAndExited"));
+        assert!(!helper.contains("hoverTrackingArea"));
+        assert!(!helper.contains("mouseEntered:"));
+        assert!(!helper.contains("mouseExited:"));
+        assert!(
+            helper
+                .matches("showsBorderOnlyWhileMouseInside = YES")
+                .count()
+                >= 3
+        );
+        assert!(helper.contains("customise.showsBorderOnlyWhileMouseInside = YES"));
+        assert!(helper.contains(
+            "quit.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor"
+        ));
+        assert!(!helper.contains("NSStackViewDistributionEqualCentering"));
+        assert!(helper.contains(
+            "systemFontOfSize:15.0 weight:NSFontWeightMedium"
+        ));
+        assert!(helper.contains(
+            "systemFontOfSize:NSFont.systemFontSize"
+        ));
+        assert!(helper.contains(
+            "systemFontOfSize:NSFont.smallSystemFontSize"
+        ));
+        assert!(helper.contains(
+            "systemFontOfSize:13.0 weight:NSFontWeightRegular"
+        ));
+    }
+
+    #[test]
+    fn design_contract_uses_appkit_semantic_visual_parameters() {
+        let readme = include_str!("../../README.md");
+        assert!(readme.contains("必须直接使用 AppKit 的原生组件与语义参数"));
+        assert!(readme.contains("不得额外叠加硬编码 RGB、透明度或自定义模糊强度"));
+        assert!(readme.contains("功能标题使用 `systemFontSize`"));
+        assert!(readme.contains("次级说明使用 `smallSystemFontSize`"));
+        assert!(readme.contains("品牌标题最多使用 `Medium`"));
+
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("SBNativePopoverPanelWindow alloc"));
+        assert!(helper.contains("self.view = content"));
+        assert!(helper.contains("@available(macOS 26.0, *)"));
+        assert!(helper.contains("NSGlassEffectView *glass"));
+        assert!(helper.contains("glass.style = NSGlassEffectViewStyleRegular"));
+        assert!(helper.contains("glass.tintColor = nil"));
+        assert!(helper.contains("glass.contentView = content"));
+        assert!(helper.contains("content.material = NSVisualEffectMaterialPopover"));
+        assert!(helper.contains("content.blendingMode = NSVisualEffectBlendingModeBehindWindow"));
+        assert!(helper.contains("SBNativePopoverPanel.titlebarAppearsTransparent = YES"));
+        assert!(helper.contains("SBNativePopoverPanel.hasShadow = YES"));
+        assert!(!helper.contains("layer.cornerRadius"));
+        assert!(!helper.contains("glass.cornerRadius"));
+        assert!(!helper.contains("NSAppearanceNameDarkAqua"));
+        assert!(!helper.contains("[NSColor colorWithWhite:0.02 alpha:0.30]"));
+        assert!(!helper.contains("NSTrackingMouseEnteredAndExited"));
+        assert!(helper.contains("settings.showsBorderOnlyWhileMouseInside = YES"));
+        assert!(helper.contains("customise.showsBorderOnlyWhileMouseInside = YES"));
+        assert!(helper.contains("quit.showsBorderOnlyWhileMouseInside = YES"));
+    }
+
+    #[test]
+    fn preferences_transition_keeps_onetouch_frontmost_until_the_window_closes() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("sb_native_popover_hide_for_app_window"));
+        assert!(helper.contains("SBHideNativePopover(NO);"));
+        assert!(helper.contains("sb_native_preferences_show"));
+        assert!(helper.contains("sb_native_restore_previous_application"));
+        assert!(helper.contains("windowWillClose"));
+        assert!(helper.contains("SBRestorePreviousApplicationAfterPopover"));
+
+        let source = include_str!("lib.rs");
+        assert!(source.contains("sb_native_popover_hide_for_app_window();"));
+        assert!(source.contains("sb_native_preferences_show()"));
+        assert!(source.contains("sb_native_preferences_create(Some(native_preferences_action))"));
+        assert!(source.contains("sb_native_restore_previous_application();"));
+    }
+
+    #[test]
+    fn macos_bundle_declares_the_real_application_icon() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let icons = config["bundle"]["icon"]
+            .as_array()
+            .expect("bundle icon list");
+        assert!(icons.iter().any(|icon| icon == "icons/icon.icns"));
+    }
+
+    #[test]
+    fn native_preferences_use_appkit_without_dropping_existing_features() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains(
+            "@interface SBNativePreferencesController"
+        ));
+        assert!(helper.contains("NSTabViewControllerTabStyleToolbar"));
+        assert!(helper.contains("NSWindowToolbarStylePreference"));
+        assert!(helper.contains("window.titleVisibility = NSWindowTitleVisible"));
+        assert!(helper.contains("self.view.window.title = label"));
+        assert!(!helper.contains("configurePreferencesToolbarButtons"));
+        assert!(helper.contains("NSPopUpButton"));
+        assert!(helper.contains("NSGridView"));
+        assert!(helper.contains("NSSearchField"));
+        assert!(helper.contains("NSTableViewStyleInset"));
+        assert!(helper.contains("toggle.controlSize = NSControlSizeMini"));
+        assert!(helper.contains("NSApplication.sharedApplication.applicationIconImage"));
+        assert!(helper.contains("self.loginSwitch = [NSSwitch new]"));
+        assert!(helper.contains("self.customTable = [self newPreferencesTable]"));
+        assert!(helper.contains("registerForDraggedTypes"));
+        assert!(helper.contains("SBEmitNativePreferencesAction(@\"order\""));
+        assert!(helper.contains("SBEmitNativePreferencesAction(@\"visibility\""));
+        assert!(helper.contains("addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown"));
+        assert!(helper.contains("SBEmitNativePreferencesAction(@\"shortcut\""));
+        assert!(!helper.contains("clear.hidden = display.length == 0"));
+        assert!(helper.contains(
+            "record.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14.0"
+        ));
+        assert!(helper.contains("SBNativePreferencesContentWidth = 400.0"));
+        assert!(helper.contains("SBNativePreferencesShortcutButtonWidth = 72.0"));
+        assert!(helper.contains("self.aboutGitHubButton"));
+        assert!(helper.contains("NSWorkspace.sharedWorkspace openURL:url"));
+
+        let source = include_str!("lib.rs");
+        assert!(source.contains("update_native_preferences"));
+        assert!(source.contains("\"native-preferences-action\""));
+        assert!(source.contains("#[cfg(not(target_os = \"macos\"))]"));
+
+        let app = include_str!("../../src/App.jsx");
+        assert!(app.contains("listenForNativePreferencesActions"));
+        assert!(app.contains("updateNativePreferences(nativePreferencesModel)"));
+        assert!(app.contains("toggleVisibleControl(current, controlId)"));
+        assert!(app.contains("validateNativeGlobalShortcut(payload)"));
+        assert!(app.contains("localStorage.setItem('switchboard-visible'"));
+        assert!(app.contains("localStorage.setItem('switchboard-order'"));
+        assert!(app.contains("localStorage.setItem('switchboard-shortcuts'"));
     }
 
     #[test]
@@ -2089,18 +2682,6 @@ mod tests {
 
         assert_eq!((position.x, position.y), (1736.0, 0.0));
         assert_eq!((size.width, size.height), (44.0, 48.0));
-    }
-
-    #[test]
-    fn selects_liquid_glass_only_when_the_runtime_supports_it() {
-        assert_eq!(
-            preferred_popover_surface(true),
-            PopoverSurface::LiquidGlass
-        );
-        assert_eq!(
-            preferred_popover_surface(false),
-            PopoverSurface::VibrancyFallback
-        );
     }
 
     #[test]
