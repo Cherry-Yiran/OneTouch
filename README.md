@@ -112,6 +112,7 @@ src-tauri/target/release/bundle/macos/OneTouch.app
 - 客户端通过 `https://github.com/Cherry-Yiran/OneTouch/releases/latest/download/latest.json` 查询最新正式版本。
 - 推送 `v*` 版本标签会触发 `.github/workflows/release.yml`，自动创建 GitHub Release 并上传 DMG、更新包、签名和 `latest.json`。
 - `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 只保存在 GitHub Actions Secrets。
+- 发布流水线已预留 `APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`、`APPLE_ID`、`APPLE_PASSWORD` 和 `APPLE_TEAM_ID`；配置 Developer ID 后会在同一次构建中完成 Apple 签名与公证。
 - `0.3.0` 是首个包含更新器的引导版本；从更早版本升级到 `0.3.0` 仍需手动安装一次，之后即可在应用内更新。
 
 ## 使用说明

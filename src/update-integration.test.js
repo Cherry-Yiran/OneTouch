@@ -26,6 +26,12 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.ok(capabilities.permissions.includes('process:allow-restart'));
   assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY \}\}/);
   assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY_PASSWORD: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD \}\}/);
+  assert.match(workflow, /APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}/);
+  assert.match(workflow, /APPLE_CERTIFICATE_PASSWORD: \$\{\{ secrets\.APPLE_CERTIFICATE_PASSWORD \}\}/);
+  assert.match(workflow, /APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}/);
+  assert.match(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_ID \}\}/);
+  assert.match(workflow, /APPLE_PASSWORD: \$\{\{ secrets\.APPLE_PASSWORD \}\}/);
+  assert.match(workflow, /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
   assert.match(workflow, /tauri-apps\/tauri-action@v1/);
   assert.match(workflow, /runs-on: macos-26/);
 });
