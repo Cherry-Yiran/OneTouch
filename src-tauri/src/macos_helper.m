@@ -47,6 +47,7 @@ static __strong NSRunningApplication *SBPreviousFrontmostApplication;
 static id SBNativePopoverLocalEventMonitor;
 static id SBNativePopoverGlobalEventMonitor;
 static BOOL SBNativePopoverPersistent = NO;
+static NSUInteger SBStatusItemRepairGeneration = 0;
 
 typedef struct {
     int available;
@@ -295,6 +296,12 @@ static void SBUpdateStatusImage(void) {
     button.accessibilityLabel = @"OneTouch";
 }
 
+static BOOL SBCreateStatusItem(void) {
+    if (SBStatusItem != nil) return YES;
+    SBStatusItem = [NSStatusBar.systemStatusBar statusItemWithLength:24.0];
+    return SBStatusItem != nil;
+}
+
 static BOOL SBStatusItemHasScreenAnchor(void) {
     NSButton *button = SBStatusItem.button;
     NSWindow *window = button.window;
@@ -308,7 +315,51 @@ static BOOL SBStatusItemHasScreenAnchor(void) {
     // holding window. A usable status item must actually intersect the
     // menu-bar strip at the top of its screen.
     CGFloat menuBarFloor = NSMaxY(screen.frame) - NSStatusBar.systemStatusBar.thickness - 6.0;
-    return NSMaxY(frame) >= menuBarFloor && NSIntersectsRect(frame, screen.frame);
+    return NSMaxY(frame) >= menuBarFloor && NSContainsRect(screen.frame, frame);
+}
+
+static BOOL SBConfigureStatusItem(void) {
+    if (SBStatusTargetInstance == nil) SBStatusTargetInstance = [SBStatusTarget new];
+    if (!SBCreateStatusItem()) return NO;
+    NSButton *button = SBStatusItem.button;
+    if (button == nil) return NO;
+
+    SBUpdateStatusImage();
+    button.target = SBStatusTargetInstance;
+    button.action = @selector(clicked:);
+    button.toolTip = @"OneTouch";
+    button.hidden = NO;
+    button.alphaValue = 1.0;
+    button.enabled = YES;
+    [button sendActionOn:NSEventMaskLeftMouseUp];
+    [button.window displayIfNeeded];
+    return YES;
+}
+
+// 0 means the item has a real screen anchor, -1 means AppKit could not create
+// the item, and -2 means the item exists but is still parked off-screen.
+static int SBEnsureStatusItemAvailable(void) {
+    NSUInteger generation = ++SBStatusItemRepairGeneration;
+    if (!SBConfigureStatusItem()) return -1;
+    if (SBStatusItemHasScreenAnchor()) return 0;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(150.0 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        if (generation != SBStatusItemRepairGeneration ||
+            SBStatusItemHasScreenAnchor()) return;
+        if (!SBConfigureStatusItem()) {
+            NSLog(@"OneTouch could not refresh its menu bar status item");
+        }
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(500.0 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        if (generation != SBStatusItemRepairGeneration ||
+            SBStatusItemHasScreenAnchor()) return;
+        NSLog(@"OneTouch menu bar status item still has no screen anchor");
+    });
+    return -2;
 }
 
 @implementation SBStatusTarget
@@ -992,7 +1043,7 @@ static const CGFloat SBAccessibilityGuideHeight = 242.0;
                    dispatch_get_main_queue(), ^{
         if (!self.showingSuccess) return;
         [self hide];
-        SBShowNativePopover(NO);
+        SBEnsureStatusItemAvailable();
     });
 }
 
@@ -2485,44 +2536,21 @@ int sb_status_item_create(SBStatusItemCallback callback) {
             disableAutomaticTermination:@"OneTouch menu bar controls are active"];
         [NSProcessInfo.processInfo disableSuddenTermination];
         SBStatusCallback = callback;
-        if (SBStatusItem == nil) {
-            SBStatusTargetInstance = [SBStatusTarget new];
-            SBStatusItem = [NSStatusBar.systemStatusBar statusItemWithLength:24.0];
-        }
-        if (SBStatusItem.button == nil) {
-            result = -1;
-            return;
-        }
-        // Establish a visible, title-backed button immediately. On macOS 26,
-        // assigning autosaveName to this third-party item parks it in a
-        // screen-edge holding window even when its visibility defaults are
-        // true. Recreate this single process-owned item on every launch
-        // instead of restoring the broken system layout identity.
-        SBUpdateStatusImage();
-        // A variable-length item with an image-only button can collapse to a
-        // zero-width slot on macOS 26 after Control Center restores its saved
-        // layout. Keep a small, explicit hit target so "visible" also means
-        // visibly present in the menu bar.
-        SBStatusItem.button.target = SBStatusTargetInstance;
-        SBStatusItem.button.action = @selector(clicked:);
-        SBStatusItem.button.toolTip = @"OneTouch";
-        SBStatusItem.button.enabled = YES;
-        SBStatusItem.button.hidden = NO;
-        SBStatusItem.button.alphaValue = 1.0;
-        [SBStatusItem.button sendActionOn:NSEventMaskLeftMouseUp];
+        int availability = SBEnsureStatusItemAvailable();
+        // AppKit may need one run-loop pass to assign the new item its window.
+        // Creation succeeds here, while later ensure/show calls still report
+        // a missing real screen anchor as -2.
+        if (availability == -1) result = -1;
     });
     return result;
 }
 
-int sb_status_item_is_visible(void) {
-    __block int visible = 0;
+int sb_status_item_ensure_available(void) {
+    __block int result = 0;
     SBRunOnMainSync(^{
-        visible = SBStatusItem != nil && SBStatusItem.isVisible &&
-                  SBStatusItem.button != nil && !SBStatusItem.button.isHidden &&
-                  SBStatusItem.button.alphaValue > 0.0 &&
-                  SBStatusItem.length >= 22.0;
+        result = SBEnsureStatusItemAvailable();
     });
-    return visible;
+    return result;
 }
 
 int sb_status_item_has_screen_anchor(void) {
@@ -2633,6 +2661,7 @@ int sb_native_popover_show(void) {
             return;
         }
         if (!SBStatusItemHasScreenAnchor()) {
+            SBEnsureStatusItemAvailable();
             result = -2;
             return;
         }
@@ -2650,6 +2679,7 @@ int sb_native_popover_show_persistent(void) {
             return;
         }
         if (!SBStatusItemHasScreenAnchor()) {
+            SBEnsureStatusItemAvailable();
             result = -2;
             return;
         }
@@ -2667,6 +2697,7 @@ int sb_native_popover_toggle(void) {
             return;
         }
         if (!SBStatusItemHasScreenAnchor()) {
+            SBEnsureStatusItemAvailable();
             result = -2;
             return;
         }

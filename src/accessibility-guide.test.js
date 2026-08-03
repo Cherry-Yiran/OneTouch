@@ -8,6 +8,9 @@ const helper = await readFile(
   new URL('../src-tauri/src/macos_helper.m', import.meta.url),
   'utf8',
 );
+const tauriConfig = JSON.parse(
+  await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
+);
 
 function objectiveCMethod(source, start, next) {
   const startIndex = source.indexOf(start);
@@ -83,12 +86,49 @@ test('does not reopen System Settings in the background after permission is revo
   assert.doesNotMatch(permissionTick, /showOpeningSystemSettings:YES/);
 });
 
-test('enters the main menu automatically after Accessibility is granted', () => {
+test('finishes Accessibility onboarding without opening the main menu', () => {
   const showSuccess = objectiveCMethod(
     helper,
     '- (void)showSuccess',
     '- (void)hide',
   );
   assert.match(showSuccess, /successStatusLabel/);
-  assert.match(showSuccess, /SBShowNativePopover\(NO\)/);
+  assert.match(showSuccess, /\[self hide\]/);
+  assert.match(showSuccess, /SBEnsureStatusItemAvailable/);
+  assert.doesNotMatch(showSuccess, /SBShowNativePopover/);
+  assert.doesNotMatch(showSuccess, /SBShowBestAvailableNativePopover/);
+});
+
+test('keeps the main controls as an anchored menu-bar panel', () => {
+  const createPopover = objectiveCMethod(
+    helper,
+    'int sb_native_popover_create(SBNativePopoverCallback callback) {',
+    'int sb_native_popover_update_json(const char *model_json) {',
+  );
+  assert.doesNotMatch(helper, /SBNativePopoverDetached/);
+  assert.doesNotMatch(helper, /SBShowDetachedNativePopover/);
+  assert.doesNotMatch(helper, /SBShowBestAvailableNativePopover/);
+  assert.doesNotMatch(createPopover, /NSWindowStyleMaskClosable/);
+  assert.doesNotMatch(createPopover, /NSWindowStyleMaskMiniaturizable/);
+  assert.match(createPopover, /NSWindowTitleHidden/);
+  assert.match(helper, /canBecomeMainWindow[\s\S]*return NO/);
+});
+
+test('uses the migrated bundle identity and a public AppKit status item', () => {
+  assert.equal(tauriConfig.identifier, 'design.ryan.onetouch.menubar');
+  assert.match(helper, /SBEnsureStatusItemAvailable/);
+  assert.match(helper, /NSContainsRect\(screen\.frame, frame\)/);
+  assert.match(helper, /150\.0 \* NSEC_PER_MSEC/);
+  assert.match(helper, /500\.0 \* NSEC_PER_MSEC/);
+  assert.match(helper, /statusItemWithLength:24\.0/);
+  assert.doesNotMatch(helper, /SBPrimaryStatusItemAutosaveName/);
+  assert.doesNotMatch(helper, /_initWithStatusBar:length:priority:systemInsertOrder:activeItem:/);
+  assert.doesNotMatch(helper, /setAutosaveName:/);
+  assert.doesNotMatch(helper, /_insertStatusItem:/);
+  assert.doesNotMatch(helper, /_wakeStatusItem/);
+  assert.doesNotMatch(helper, /SBStatusItemBehaviorNeverClip/);
+  assert.doesNotMatch(helper, /_setDropPriority:/);
+  assert.doesNotMatch(helper, /OneTouchStatusDebug/);
+  assert.doesNotMatch(helper, /removeStatusItem/);
+  assert.doesNotMatch(helper, /SBStatusItem\.visible = YES/);
 });

@@ -36,18 +36,97 @@ const ALL_CONTROL_IDS: [&str; 28] = [
     "spotify", "hiddenFiles", "displaySleep", "resolution", "hideWidgets",
     "stageManager", "cleanScreen", "lockKeyboard", "lockScreen",
 ];
-// Keep the legacy preferences domain so the clean OneTouch bundle identity
-// does not reset the user's selected controls, order, timers, or settings.
+// Keep native preferences in their legacy domain. WebView-backed settings are
+// migrated separately before the first window is created under the clean ID.
 const PREFERENCES_DOMAIN: &str = "design.ryan.switchboard.menubar.v2";
 const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
 const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
+
+#[cfg(target_os = "macos")]
+const LEGACY_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch";
+#[cfg(target_os = "macos")]
+const CURRENT_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch.menubar";
+
+#[cfg(target_os = "macos")]
+fn copy_directory_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_directory_tree(&entry.path(), &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn migrate_legacy_webkit_data_in(library_directory: &Path) -> std::io::Result<bool> {
+    let marker = library_directory
+        .join("Application Support")
+        .join("OneTouch")
+        .join("Migrations")
+        .join("webkit-bundle-identity-v1.complete");
+    if marker.exists() {
+        return Ok(false);
+    }
+
+    let webkit_directory = library_directory.join("WebKit");
+    let source = webkit_directory.join(LEGACY_WEBKIT_BUNDLE_ID);
+    let destination = webkit_directory.join(CURRENT_WEBKIT_BUNDLE_ID);
+    let mut migrated = false;
+
+    if source.is_dir() && !destination.exists() {
+        let temporary_destination = webkit_directory.join(format!(
+            ".{CURRENT_WEBKIT_BUNDLE_ID}.migration-{}",
+            std::process::id()
+        ));
+        if temporary_destination.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "a previous OneTouch WebKit migration is still present",
+            ));
+        }
+
+        if let Err(error) = copy_directory_tree(&source, &temporary_destination)
+            .and_then(|_| fs::rename(&temporary_destination, &destination))
+        {
+            let _ = fs::remove_dir_all(&temporary_destination);
+            return Err(error);
+        }
+        migrated = true;
+    }
+
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(
+        marker,
+        format!("{LEGACY_WEBKIT_BUNDLE_ID} -> {CURRENT_WEBKIT_BUNDLE_ID}\n"),
+    )?;
+    Ok(migrated)
+}
+
+#[cfg(target_os = "macos")]
+fn migrate_legacy_webkit_data() -> std::io::Result<bool> {
+    let home = env::var_os("HOME").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "macOS home directory is unavailable",
+        )
+    })?;
+    migrate_legacy_webkit_data_in(&Path::new(&home).join("Library"))
+}
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn sb_status_item_create(
         callback: Option<extern "C" fn(x: f64, y: f64, width: f64, height: f64)>,
     ) -> c_int;
-    fn sb_status_item_is_visible() -> c_int;
+    fn sb_status_item_ensure_available() -> c_int;
     fn sb_accessibility_is_trusted() -> c_int;
     fn sb_accessibility_guide_create() -> c_int;
     fn sb_accessibility_guide_update_json(model_json: *const c_char) -> c_int;
@@ -2228,6 +2307,11 @@ fn create_windows(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = migrate_legacy_webkit_data() {
+        eprintln!("OneTouch could not migrate its previous WebKit settings: {error}");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -2279,12 +2363,6 @@ pub fn run() {
                 if result != 0 {
                     return Err(std::io::Error::other(
                         "macOS did not create the OneTouch status item",
-                    )
-                    .into());
-                }
-                if unsafe { sb_status_item_is_visible() } == 0 {
-                    return Err(std::io::Error::other(
-                        "macOS created the OneTouch status item but kept it hidden",
                     )
                     .into());
                 }
@@ -2367,17 +2445,20 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building OneTouch")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
-                let _ = show_popover(app_handle.clone());
+                let result = unsafe { sb_status_item_ensure_available() };
+                if result != 0 {
+                    eprintln!("OneTouch could not restore its menu bar icon ({result})");
+                }
             }
         });
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
         control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
@@ -2385,6 +2466,62 @@ mod tests {
         snapshot_state_known, system_settings_url, timer_menu_choice, DiskutilVolumeInfo,
         EjectableDiskCandidate,
     };
+
+    #[cfg(target_os = "macos")]
+    use super::migrate_legacy_webkit_data_in;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn migrates_legacy_webkit_local_storage_before_creating_webviews() {
+        let source = include_str!("lib.rs");
+        assert!(
+            source.find("migrate_legacy_webkit_data()").unwrap()
+                < source.find("tauri::Builder::default()").unwrap()
+        );
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "onetouch-webkit-migration-{}-{nonce}",
+            std::process::id()
+        ));
+        let legacy_storage = root
+            .join("WebKit")
+            .join("design.ryan.onetouch")
+            .join("WebsiteData")
+            .join("Default")
+            .join("origin")
+            .join("LocalStorage")
+            .join("localstorage.sqlite3");
+        std::fs::create_dir_all(legacy_storage.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_storage, b"existing OneTouch settings").unwrap();
+
+        assert!(migrate_legacy_webkit_data_in(&root).unwrap());
+        let migrated_storage = root
+            .join("WebKit")
+            .join("design.ryan.onetouch.menubar")
+            .join("WebsiteData")
+            .join("Default")
+            .join("origin")
+            .join("LocalStorage")
+            .join("localstorage.sqlite3");
+        assert_eq!(
+            std::fs::read(migrated_storage).unwrap(),
+            b"existing OneTouch settings"
+        );
+        assert!(legacy_storage.exists());
+        assert!(!migrate_legacy_webkit_data_in(&root).unwrap());
+        assert!(root
+            .join("Application Support")
+            .join("OneTouch")
+            .join("Migrations")
+            .join("webkit-bundle-identity-v1.complete")
+            .exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn detects_ejectable_images_and_disks_but_excludes_system_volumes() {
@@ -2523,12 +2660,12 @@ mod tests {
     }
 
     #[test]
-    fn native_status_item_avoids_broken_layout_restore_and_automatic_termination() {
+    fn native_status_item_uses_the_migrated_bundle_identity_and_public_appkit_api() {
         let helper = include_str!("macos_helper.m");
-        assert!(!helper.contains("autosaveName ="));
+        let config = include_str!("../tauri.conf.json");
+        assert!(config.contains("\"identifier\": \"design.ryan.onetouch.menubar\""));
         assert!(!helper.contains("NSStatusItem Visible "));
         assert!(!helper.contains("NSStatusItem VisibleCC "));
-        assert!(!helper.contains("primary-status-item"));
         assert!(helper.contains("statusItemWithLength:24.0"));
         assert!(!helper.contains("SBStatusItem.length ="));
         assert!(helper.contains("initWithString:@\"P\""));
@@ -2538,7 +2675,23 @@ mod tests {
         assert!(!helper.contains(
             "SBStatusIconView.contentTintColor = NSColor.whiteColor"
         ));
+        assert!(!helper.contains(
+            "_initWithStatusBar:length:priority:systemInsertOrder:activeItem:"
+        ));
+        assert!(!helper.contains("SBPrimaryStatusItemAutosaveName"));
+        assert!(!helper.contains("setAutosaveName:"));
+        assert!(!helper.contains("_insertStatusItem:"));
+        assert!(!helper.contains("_wakeStatusItem"));
+        assert!(!helper.contains("SBStatusItemBehaviorNeverClip"));
         assert!(!helper.contains("_setDropPriority:"));
+        assert!(!helper.contains("OneTouchStatusDebug"));
+        assert!(helper.contains("SBEnsureStatusItemAvailable"));
+        assert!(helper.contains("NSContainsRect(screen.frame, frame)"));
+        assert!(helper.contains("150.0 * NSEC_PER_MSEC"));
+        assert!(helper.contains("500.0 * NSEC_PER_MSEC"));
+        assert!(helper.contains("return -2;"));
+        assert!(helper.contains("result = SBEnsureStatusItemAvailable();"));
+        assert!(!helper.contains("removeStatusItem"));
         assert!(!helper.contains("SBStatusItem.visible = YES"));
         assert!(helper.contains("disableAutomaticTermination"));
         assert!(helper.contains("disableSuddenTermination"));
@@ -2549,10 +2702,18 @@ mod tests {
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("SBStatusItemHasScreenAnchor"));
         assert!(helper.contains("menuBarFloor"));
-        assert!(helper.contains("result = -2"));
+        assert!(helper.contains("SBEnsureStatusItemAvailable"));
+        assert!(!helper.contains("SBNativePopoverDetached"));
+        assert!(!helper.contains("SBShowDetachedNativePopover"));
 
-        let source = include_str!("lib.rs");
+        let source = include_str!("lib.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(!source.contains("sb_status_item_is_visible"));
         assert!(source.contains("tauri::RunEvent::Reopen"));
+        assert!(source.contains("sb_status_item_ensure_available"));
+        assert!(!source.contains("show_popover(app_handle.clone())"));
         assert!(source.contains("menu bar icon does not have a screen anchor"));
         assert!(source.contains("Never invent a top-right anchor"));
         assert!(source.contains("NATIVE_POPOVER_MODEL_READY.swap(true"));
