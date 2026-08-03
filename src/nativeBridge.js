@@ -154,9 +154,9 @@ export async function relaunchNativeApp() {
   return true;
 }
 
-export async function openNativePreferences() {
+export async function openNativePreferences(pane = 'general') {
   if (!isTauri()) return false;
-  await invoke('open_preferences');
+  await invoke('open_preferences', { pane });
   return true;
 }
 

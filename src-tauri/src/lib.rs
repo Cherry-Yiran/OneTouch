@@ -75,7 +75,7 @@ unsafe extern "C" {
         >,
     ) -> c_int;
     fn sb_native_preferences_update_json(model_json: *const c_char) -> c_int;
-    fn sb_native_preferences_show() -> c_int;
+    fn sb_native_preferences_show(pane: *const c_char) -> c_int;
     fn sb_timer_menu_show(
         window_pointer: *mut c_void,
         anchor_right: f64,
@@ -1715,16 +1715,25 @@ async fn set_display_mode(
 }
 
 #[tauri::command]
-fn open_preferences(app: AppHandle) -> Result<(), String> {
+fn open_preferences(app: AppHandle, pane: Option<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        let pane = match pane.as_deref() {
+            None | Some("general") => "general",
+            Some("customise") => "customise",
+            Some("shortcuts") => "shortcuts",
+            Some("about") => "about",
+            Some(other) => return Err(format!("Unknown preferences pane: {other}")),
+        };
+        let pane = CString::new(pane)
+            .map_err(|_| "The preferences pane contains an invalid null byte".to_string())?;
         unsafe {
             sb_native_popover_hide_for_app_window();
         }
         if let Some(popover) = app.get_webview_window("popover") {
             let _ = popover.hide();
         }
-        let result = unsafe { sb_native_preferences_show() };
+        let result = unsafe { sb_native_preferences_show(pane.as_ptr()) };
         return if result == 0 {
             Ok(())
         } else {
@@ -2726,7 +2735,7 @@ mod tests {
 
         let source = include_str!("lib.rs");
         assert!(source.contains("sb_native_popover_hide_for_app_window();"));
-        assert!(source.contains("sb_native_preferences_show()"));
+        assert!(source.contains("sb_native_preferences_show(pane.as_ptr())"));
         assert!(source.contains("sb_native_preferences_create(Some(native_preferences_action))"));
         assert!(source.contains("sb_native_restore_previous_application();"));
     }

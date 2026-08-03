@@ -372,6 +372,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [preferencesInitialTab, setPreferencesInitialTab] = useState('general');
   const [switches, setSwitches] = useState(() => {
     try {
       const restored = { ...INITIAL_SWITCHES, ...JSON.parse(localStorage.getItem('switchboard-state') || '{}') };
@@ -1190,9 +1191,10 @@ export default function App() {
     }
   };
 
-  const openPreferences = async () => {
-    if (nativeView === 'popover' && await openNativePreferences()) return;
+  const openPreferences = async (pane = 'general') => {
+    if (nativeView === 'popover' && await openNativePreferences(pane)) return;
     setIsOpen(false);
+    setPreferencesInitialTab(pane);
     setPreferencesOpen(true);
   };
 
@@ -1207,7 +1209,11 @@ export default function App() {
       return;
     }
     if (action === 'settings') {
-      await openPreferences();
+      await openPreferences('general');
+      return;
+    }
+    if (action === 'customise') {
+      await openPreferences('customise');
       return;
     }
     if (action === 'quit') {
@@ -1446,6 +1452,7 @@ export default function App() {
       shortcuts={shortcuts}
       setShortcuts={setShortcuts}
       nativeTitlebar={nativeView === 'preferences'}
+      initialTab={preferencesInitialTab}
       appVersion={appVersion}
       onClose={nativeView === 'preferences' ? hideNativeWindow : () => setPreferencesOpen(false)}
     />
@@ -1521,7 +1528,7 @@ export default function App() {
           : <RowAction pending={pending} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} label={controlLabel} />;
         return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
       })}</div>
-      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={openPreferences}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={openPreferences}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
+      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
       {resolutionPanelOpen && (
         <ResolutionPanel
           copy={text}

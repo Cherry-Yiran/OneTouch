@@ -42,6 +42,20 @@ test('native settings window follows the selected pane content height', () => {
   );
 });
 
+test('settings and customisation footer buttons open distinct native panes', () => {
+  assert.match(
+    macosHelper,
+    /NSArray<NSString \*> \*actions = @\[@"settings", @"customise", @"quit"\]/,
+  );
+  assert.match(
+    macosHelper,
+    /int sb_native_preferences_show\(const char \*pane\)[\s\S]*?@"general": @0[\s\S]*?@"customise": @1[\s\S]*?controller\.selectedTabViewItemIndex/,
+  );
+  assert.match(nativeBridge, /invoke\('open_preferences', \{ pane \}\)/);
+  assert.match(app, /action === 'customise'[\s\S]*?openPreferences\('customise'\)/);
+  assert.match(app, /action === 'settings'[\s\S]*?openPreferences\('general'\)/);
+});
+
 test('native settings use compact shared spacing and shortcut controls', () => {
   assert.match(macosHelper, /SBNativePreferencesHorizontalInset\s*=\s*20\.0/);
   assert.match(macosHelper, /SBNativePreferencesRowHeight\s*=\s*34\.0/);
@@ -51,6 +65,10 @@ test('native settings use compact shared spacing and shortcut controls', () => {
     /languagePopup\.widthAnchor constraintEqualToConstant:184\.0/,
   );
   assert.doesNotMatch(macosHelper, /constraintGreaterThanOrEqualToConstant:92\.0/);
+  assert.match(
+    macosHelper,
+    /self\.loginSwitch = \[NSSwitch new\];[\s\S]*?self\.loginSwitch\.controlSize = NSControlSizeSmall/,
+  );
 });
 
 test('native customisation uses checkboxes for multi-selection', () => {

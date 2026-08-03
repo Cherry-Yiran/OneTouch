@@ -1360,7 +1360,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     quit.showsBorderOnlyWhileMouseInside = YES;
 
     NSArray<NSButton *> *buttons = @[settings, customise, quit];
-    NSArray<NSString *> *actions = @[@"settings", @"settings", @"quit"];
+    NSArray<NSString *> *actions = @[@"settings", @"customise", @"quit"];
     for (NSUInteger index = 0; index < buttons.count; index += 1) {
         buttons[index].buttonType = NSButtonTypeMomentaryPushIn;
         buttons[index].bordered = YES;
@@ -1742,7 +1742,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     [self.languagePopup.widthAnchor constraintEqualToConstant:184.0].active = YES;
 
     self.loginSwitch = [NSSwitch new];
-    self.loginSwitch.controlSize = NSControlSizeRegular;
+    self.loginSwitch.controlSize = NSControlSizeSmall;
     self.loginSwitch.target = self;
     self.loginSwitch.action = @selector(loginChanged:);
 
@@ -2806,7 +2806,7 @@ int sb_native_preferences_update_json(const char *model_json) {
     return result;
 }
 
-int sb_native_preferences_show(void) {
+int sb_native_preferences_show(const char *pane) {
     __block int result = 0;
     SBRunOnMainSync(^{
         NSWindow *window = SBNativePreferencesWindowController.window;
@@ -2821,6 +2821,19 @@ int sb_native_preferences_show(void) {
             [window.contentViewController isKindOfClass:SBNativePreferencesController.class]
                 ? (SBNativePreferencesController *)window.contentViewController
                 : nil;
+        NSString *requestedPane = pane == NULL
+            ? @"general"
+            : [NSString stringWithUTF8String:pane];
+        NSDictionary<NSString *, NSNumber *> *paneIndexes = @{
+            @"general": @0,
+            @"customise": @1,
+            @"shortcuts": @2,
+            @"about": @3,
+        };
+        NSNumber *requestedIndex = paneIndexes[requestedPane ?: @"general"];
+        controller.selectedTabViewItemIndex = requestedIndex != nil
+            ? requestedIndex.integerValue
+            : 0;
         [controller resizeWindowForSelectedTabAnimated:NO];
         // AppKit can restore the previously selected toolbar item after the
         // window becomes visible. Re-read that final selection on the next run
