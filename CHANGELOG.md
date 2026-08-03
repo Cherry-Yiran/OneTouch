@@ -2,6 +2,22 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.2] - 2026-08-03
+
+### 改进
+
+- 应用图标更新为最终确认的右侧开启状态开关图标。
+- 更换为专用于菜单栏应用的 Bundle ID，避免 macOS 26 将状态栏图标错误放入不可见区域。
+- 首次使用新 Bundle ID 时自动迁移原有本地配置，包括语言、控制项、排序、快捷键与定时设置。
+
+### 修复
+
+- 修复辅助功能授权成功、应用重新打开时面板自动弹出或出现在错误位置的问题。
+- 修复状态栏图标创建失败时仍被当作成功处理的问题，面板只会在图标存在且具备有效锚点时显示。
+- 修复旧 WebKit 数据目录迁移可能不完整的问题，迁移使用原子写入并记录完成状态。
+
+> 注意：由于 Bundle ID 已更正，安装此版本后 macOS 会要求重新授予一次辅助功能权限；原有 OneTouch 设置会自动保留。
+
 ## [0.3.1] - 2026-08-03
 
 ### 新增
@@ -68,6 +84,7 @@
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
+[0.3.2]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.1.0...v0.2.0
