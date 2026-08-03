@@ -336,10 +336,12 @@ static BOOL SBConfigureStatusItem(void) {
     return YES;
 }
 
-static BOOL SBEnsureStatusItemAvailable(void) {
+// 0 means the item has a real screen anchor, -1 means AppKit could not create
+// the item, and -2 means the item exists but is still parked off-screen.
+static int SBEnsureStatusItemAvailable(void) {
     NSUInteger generation = ++SBStatusItemRepairGeneration;
-    if (!SBConfigureStatusItem()) return NO;
-    if (SBStatusItemHasScreenAnchor()) return YES;
+    if (!SBConfigureStatusItem()) return -1;
+    if (SBStatusItemHasScreenAnchor()) return 0;
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                  (int64_t)(150.0 * NSEC_PER_MSEC)),
@@ -357,7 +359,7 @@ static BOOL SBEnsureStatusItemAvailable(void) {
             SBStatusItemHasScreenAnchor()) return;
         NSLog(@"OneTouch menu bar status item still has no screen anchor");
     });
-    return YES;
+    return -2;
 }
 
 @implementation SBStatusTarget
@@ -2534,7 +2536,11 @@ int sb_status_item_create(SBStatusItemCallback callback) {
             disableAutomaticTermination:@"OneTouch menu bar controls are active"];
         [NSProcessInfo.processInfo disableSuddenTermination];
         SBStatusCallback = callback;
-        if (!SBEnsureStatusItemAvailable()) result = -1;
+        int availability = SBEnsureStatusItemAvailable();
+        // AppKit may need one run-loop pass to assign the new item its window.
+        // Creation succeeds here, while later ensure/show calls still report
+        // a missing real screen anchor as -2.
+        if (availability == -1) result = -1;
     });
     return result;
 }
@@ -2542,7 +2548,7 @@ int sb_status_item_create(SBStatusItemCallback callback) {
 int sb_status_item_ensure_available(void) {
     __block int result = 0;
     SBRunOnMainSync(^{
-        if (!SBEnsureStatusItemAvailable()) result = -1;
+        result = SBEnsureStatusItemAvailable();
     });
     return result;
 }

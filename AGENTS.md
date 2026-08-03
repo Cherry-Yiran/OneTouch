@@ -21,6 +21,7 @@
 
 - 正式应用 bundle ID 固定为 `design.ryan.onetouch.menubar`。旧 ID `design.ryan.onetouch` 在 macOS 26 实机上已出现无法通过 defaults、LaunchServices 注销或 Control Center 重启清除的 scene 状态项布局损坏；不得在没有全新系统对照证据时改回旧 ID。
 - 用户配置继续保存在 `design.ryan.switchboard.menubar.v2`，不得因 bundle ID 迁移重置控制项、排序、计时器或其他设置。
+- 首次使用新 bundle ID 创建 WebView 前，必须完成旧 `~/Library/WebKit/design.ryan.onetouch` 数据的一次性迁移；不得只保留原生 UserDefaults 而丢失 localStorage 中的语言、控制项、排序、快捷键与计时器。
 - 菜单栏图标“可用”必须以真实屏幕锚点为准，不能只检查 `NSStatusItem`、button 或 window 对象是否存在。
 - 必须识别 macOS 把状态项放入屏幕外 holding 区域的情况；对象存在不等于用户可见。
 - 状态项恢复不得循环 remove/recreate，不得设置 `autosaveName`，不得强制 `visible = YES` 触发 macOS 26 的隐藏布局问题。

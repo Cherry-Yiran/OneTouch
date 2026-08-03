@@ -40,7 +40,7 @@ OneTouch 是一款 macOS 菜单栏快捷控制工具，把常用系统开关集�
 - “关于”页只保留应用图标、产品名、版本号、原生更新按钮和 GitHub 原生跳转按钮；产品介绍、权限说明等非身份信息不得占用该页面。
 - 主控制浮窗必须读取 `NSStatusItem.button` 的真实屏幕坐标，以按钮中点为锚点水平居中，并直接贴合菜单栏下沿；不得额外添加间隙，也不得使用右上角、主屏幕中心等猜测坐标。
 - 启动、登录启动、辅助功能授权成功和再次打开应用都只确保菜单栏状态项可用，不得自动展示主控制浮窗；只有用户点击菜单栏图标或触发需要选择界面的快捷键时才展示浮窗。
-- OneTouch 只使用单个公开 AppKit 状态项；不得用私有 `NSSceneStatusItem` 初始化、drop/insert priority、system order、不可裁剪 behavior、循环重建或 `autosaveName` 操纵菜单栏布局。macOS 26 上受损的旧 bundle ID 已迁移为 `design.ryan.onetouch.menubar`，用户配置仍从 `design.ryan.switchboard.menubar.v2` 读取；新身份首次运行需要重新授权辅助功能一次。没有真实屏幕锚点时仍禁止把控制界面切换为居中窗口、标题栏窗口或其他普通桌面应用形态。
+- OneTouch 只使用单个公开 AppKit 状态项；不得用私有 `NSSceneStatusItem` 初始化、drop/insert priority、system order、不可裁剪 behavior、循环重建或 `autosaveName` 操纵菜单栏布局。macOS 26 上受损的旧 bundle ID 已迁移为 `design.ryan.onetouch.menubar`；原生偏好继续从 `design.ryan.switchboard.menubar.v2` 读取，WebKit 数据则在首个 WebView 创建前从旧 bundle ID 一次性迁移，因此语言、控制项、排序、快捷键和计时器不会被重置。新身份首次运行需要重新授权辅助功能一次。没有真实屏幕锚点时仍禁止把控制界面切换为居中窗口、标题栏窗口或其他普通桌面应用形态。
 - 主控制浮窗不显示箭头，也不得用 CSS、CALayer 或图片伪造尖角、圆角、边框、背景、模糊、阴影和开合动画；这些视觉行为统一使用 `NSPanel`、`NSVisualEffectView` 和 `NSWindowAnimationBehaviorUtilityWindow` 的公开系统能力。
 - 主面板只在“标题与控制列表”“控制列表与底部操作区”两个分组边界使用 AppKit 原生 `NSBoxSeparator`；控制行之间不加分割线，也不得用自绘颜色、CSS 边框或 CALayer 模拟系统分割线。
 
