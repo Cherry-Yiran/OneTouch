@@ -38,6 +38,16 @@ jobs:
 
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Require stable Apple code signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE" || -z "$APPLE_SIGNING_IDENTITY" ]]; then
+            echo "Refusing to publish an ad-hoc signed build because macOS permissions would break after updates."
+            exit 1
+          fi
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

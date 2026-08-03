@@ -2803,7 +2803,8 @@ mod tests {
         assert!(helper.contains("accessibilityDisplayShouldReduceMotion"));
         assert!(helper.contains("NSGlassEffectViewStyleRegular"));
         assert!(helper.contains("AXIsProcessTrusted()"));
-        assert!(!helper.contains("AXIsProcessTrustedWithOptions"));
+        assert!(helper.contains("AXIsProcessTrustedWithOptions"));
+        assert!(helper.contains("kAXTrustedCheckOptionPrompt"));
 
         let source = include_str!("lib.rs");
         assert!(source.contains("fn require_accessibility_or_show_guide"));

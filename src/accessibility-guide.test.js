@@ -38,11 +38,18 @@ test('routes Accessibility recovery through the native guide', () => {
   assert.match(bridge, /invoke\('show_accessibility_guide'/);
 });
 
-test('uses the app bundle URL as a native drag payload without prompting AX checks', () => {
+test('uses the app bundle URL and the official explicit Accessibility prompt', () => {
   assert.match(helper, /initWithPasteboardWriter:self\.appURL/);
   assert.match(helper, /pathExtension\.lowercaseString isEqualToString:@"app"/);
   assert.match(helper, /AXIsProcessTrusted\(\)/);
-  assert.doesNotMatch(helper, /AXIsProcessTrustedWithOptions/);
+  assert.match(helper, /AXIsProcessTrustedWithOptions/);
+  assert.match(helper, /kAXTrustedCheckOptionPrompt/);
+  const permissionTick = objectiveCMethod(
+    helper,
+    '- (void)permissionTick:',
+    '- (void)trackingTick:',
+  );
+  assert.doesNotMatch(permissionTick, /AXIsProcessTrustedWithOptions/);
 });
 
 test('keeps the native permission guide compact and explicit', () => {

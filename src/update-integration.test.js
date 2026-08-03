@@ -34,6 +34,9 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.match(workflow, /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
   assert.match(workflow, /tauri-apps\/tauri-action@v1/);
   assert.match(workflow, /runs-on: macos-26/);
+  assert.notEqual(config.bundle.macOS.signingIdentity, '-');
+  assert.match(workflow, /Require stable Apple code signing/);
+  assert.match(workflow, /Refusing to publish an ad-hoc signed build/);
 });
 
 test('the native bridge checks, installs, and relaunches through official Tauri plugins', () => {

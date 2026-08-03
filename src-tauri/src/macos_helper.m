@@ -396,6 +396,14 @@ static BOOL SBOpenAccessibilitySystemSettings(void) {
     return url != nil && [NSWorkspace.sharedWorkspace openURL:url];
 }
 
+static BOOL SBRequestAccessibilityPrompt(void) {
+    if (AXIsProcessTrusted()) return YES;
+    NSDictionary *options = @{
+        (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES,
+    };
+    return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
 static NSRect SBAppKitRectFromCGWindowRect(CGRect cgRect) {
     NSScreen *bestScreen = nil;
     CGRect bestDisplayBounds = CGRectZero;
@@ -865,7 +873,13 @@ static const CGFloat SBAccessibilityGuideHeight = 242.0;
         [self.panel setFrameOrigin:origin];
     }
     [self.panel orderFrontRegardless];
-    if (openSettings) SBOpenAccessibilitySystemSettings();
+    if (openSettings) {
+        // Register this exact signed app with TCC before opening the matching
+        // settings pane. The prompt is only requested from an explicit
+        // onboarding/recovery action, never from the background polling timer.
+        SBRequestAccessibilityPrompt();
+        SBOpenAccessibilitySystemSettings();
+    }
     [self startTracking];
 }
 
