@@ -992,7 +992,9 @@ static const CGFloat SBAccessibilityGuideHeight = 242.0;
                    dispatch_get_main_queue(), ^{
         if (!self.showingSuccess) return;
         [self hide];
-        SBShowNativePopover(NO);
+        if (AXIsProcessTrusted() && SBStatusItemHasScreenAnchor()) {
+            SBShowNativePopover(NO);
+        }
     });
 }
 

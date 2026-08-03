@@ -2833,6 +2833,20 @@ mod tests {
     }
 
     #[test]
+    fn accessibility_completion_opens_the_native_popover() {
+        let helper = include_str!("macos_helper.m");
+        let success = helper
+            .split("- (void)showSuccess")
+            .nth(1)
+            .and_then(|source| source.split("- (void)hide").next())
+            .expect("Accessibility success handler");
+
+        assert!(success.contains("AXIsProcessTrusted()"));
+        assert!(success.contains("SBStatusItemHasScreenAnchor()"));
+        assert!(success.contains("SBShowNativePopover(NO)"));
+    }
+
+    #[test]
     fn parses_bluetooth_headphone_battery_from_system_profiler() {
         let profile = serde_json::json!({
             "SPBluetoothDataType": [{
