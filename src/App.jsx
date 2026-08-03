@@ -64,11 +64,13 @@ import {
   setNativeDisplayMode,
   setNativeEjectExclusions,
   setNativeSwitch,
+  showNativeAccessibilityGuide,
   showLegacyPopover,
   showNativePopover,
   showNativeTimerMenu,
   syncNativeGlobalShortcuts,
   updateNativePreferences,
+  updateNativeAccessibilityGuide,
   updateNativePopover,
   validateNativeGlobalShortcut,
 } from './nativeBridge.js';
@@ -100,6 +102,33 @@ const COPY = {
     preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在处理中…', completed: '已完成', trashAlreadyEmpty: '垃圾桶已经空了', runAction: '执行', chooseAction: '选择', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', timerRetry: '关闭失败 · 1 分钟后重试', timerLongPressHint: '点击选择开启时长', diskLongPressHint: '长按管理受保护磁盘', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取可推出磁盘…', diskNone: '当前没有可推出的磁盘或磁盘映像。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '点击开关选择开启时长'], awake: ['保持唤醒', '点击开关选择开启时长'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '点击开关选择开启时长'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], ejectDisk: ['推出磁盘', '短按全部推出 · 长按保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
   },
 };
+
+export const ACCESSIBILITY_GUIDE_COPY = Object.freeze({
+  en: Object.freeze({
+    title: 'Enable Accessibility',
+    explanation: 'Grant access once so OneTouch controls can work without interrupting you later.',
+    privacy: 'Only the controls you choose are executed. Keystrokes are never recorded or uploaded.',
+    appName: 'OneTouch',
+    dragHint: 'Drag into the list',
+    fallback: 'Use + to choose OneTouch.app',
+    close: 'Close',
+    quit: 'Quit OneTouch',
+    successTitle: 'Accessibility Enabled',
+    successStatus: 'OneTouch is ready.',
+  }),
+  zh: Object.freeze({
+    title: '开启辅助功能权限',
+    explanation: '只需授权一次，之后使用 OneTouch 控制时不会再被打断。',
+    privacy: '仅执行你主动选择的控制，不会记录或上传键盘内容。',
+    appName: 'OneTouch',
+    dragHint: '拖入辅助功能列表',
+    fallback: '请使用 + 选择 OneTouch.app',
+    close: '关闭',
+    quit: '退出 OneTouch',
+    successTitle: '辅助功能已开启',
+    successStatus: 'OneTouch 已准备就绪。',
+  }),
+});
 
 const KEYBOARD_CLEANING_COPY = Object.freeze({
   en: ['Keyboard cleaning', 'Ignore key presses while cleaning · turn off from the menu'],
@@ -343,6 +372,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [preferencesInitialTab, setPreferencesInitialTab] = useState('general');
   const [switches, setSwitches] = useState(() => {
     try {
       const restored = { ...INITIAL_SWITCHES, ...JSON.parse(localStorage.getItem('switchboard-state') || '{}') };
@@ -1152,7 +1182,8 @@ export default function App() {
   const recoverPermission = async (id, pane) => {
     const controlTitle = text[id]?.[0] || id;
     try {
-      await openNativeSystemSettings(pane);
+      if (pane === 'accessibility') await showNativeAccessibilityGuide();
+      else await openNativeSystemSettings(pane);
       setAnnouncement(`${controlTitle}: ${text.openingSettings}`);
     } catch (error) {
       const message = localiseNativeError(error, language, text);
@@ -1160,9 +1191,10 @@ export default function App() {
     }
   };
 
-  const openPreferences = async () => {
-    if (nativeView === 'popover' && await openNativePreferences()) return;
+  const openPreferences = async (pane = 'general') => {
+    if (nativeView === 'popover' && await openNativePreferences(pane)) return;
     setIsOpen(false);
+    setPreferencesInitialTab(pane);
     setPreferencesOpen(true);
   };
 
@@ -1177,7 +1209,11 @@ export default function App() {
       return;
     }
     if (action === 'settings') {
-      await openPreferences();
+      await openPreferences('general');
+      return;
+    }
+    if (action === 'customise') {
+      await openPreferences('customise');
       return;
     }
     if (action === 'quit') {
@@ -1317,6 +1353,17 @@ export default function App() {
     updateNativePopover(nativePopoverModel).catch(() => undefined);
   }, [nativeApp, nativePopoverModel, nativeView]);
 
+  const accessibilityGuideModel = useMemo(() => ({
+    ...ACCESSIBILITY_GUIDE_COPY[language],
+    language,
+    autoShow: true,
+  }), [language]);
+
+  useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover') return;
+    updateNativeAccessibilityGuide(accessibilityGuideModel).catch(() => undefined);
+  }, [accessibilityGuideModel, nativeApp, nativeView]);
+
   const nativePreferencesModel = useMemo(() => {
     const copy = PREFERENCES_COPY[language];
     let updateTitle = copy.checkForUpdates;
@@ -1405,6 +1452,7 @@ export default function App() {
       shortcuts={shortcuts}
       setShortcuts={setShortcuts}
       nativeTitlebar={nativeView === 'preferences'}
+      initialTab={preferencesInitialTab}
       appVersion={appVersion}
       onClose={nativeView === 'preferences' ? hideNativeWindow : () => setPreferencesOpen(false)}
     />
@@ -1480,7 +1528,7 @@ export default function App() {
           : <RowAction pending={pending} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} label={controlLabel} />;
         return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
       })}</div>
-      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={openPreferences}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={openPreferences}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
+      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
       {resolutionPanelOpen && (
         <ResolutionPanel
           copy={text}

@@ -154,9 +154,9 @@ export async function relaunchNativeApp() {
   return true;
 }
 
-export async function openNativePreferences() {
+export async function openNativePreferences(pane = 'general') {
   if (!isTauri()) return false;
-  await invoke('open_preferences');
+  await invoke('open_preferences', { pane });
   return true;
 }
 
@@ -200,6 +200,17 @@ export async function updateNativePreferences(model) {
   if (!isTauri()) return false;
   await invoke('update_native_preferences', { model });
   return true;
+}
+
+export async function updateNativeAccessibilityGuide(model) {
+  if (!isTauri()) return false;
+  await invoke('update_accessibility_guide', { model });
+  return true;
+}
+
+export async function showNativeAccessibilityGuide() {
+  if (!isTauri()) return false;
+  return invoke('show_accessibility_guide');
 }
 
 export async function listenForNativePopoverActions(handler) {

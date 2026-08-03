@@ -378,10 +378,15 @@ export default function Preferences({
   shortcuts,
   setShortcuts,
   nativeTitlebar = false,
+  initialTab = 'general',
   appVersion = '',
   onClose,
 }) {
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  useEffect(() => {
+    if (TAB_DATA.some(({ id }) => id === initialTab)) setActiveTab(initialTab);
+  }, [initialTab]);
   const [draggedId, setDraggedId] = useState(null);
   const [recordingShortcutId, setRecordingShortcutId] = useState(null);
   const [shortcutMessage, setShortcutMessage] = useState('');

@@ -32,8 +32,7 @@
     "shortDescription": "A quiet macOS menu bar control desk",
     "longDescription": "OneTouch collects everyday macOS controls into one focused menu bar utility.",
     "macOS": {
-      "minimumSystemVersion": "13.0",
-      "signingIdentity": "-"
+      "minimumSystemVersion": "13.0"
     }
   },
   "plugins": {

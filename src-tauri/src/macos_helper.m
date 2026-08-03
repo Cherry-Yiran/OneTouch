@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 
 #include <dlfcn.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,8 @@ static SBNativePopoverCallback SBNativePopoverActionCallback = NULL;
 static SBNativePreferencesCallback SBNativePreferencesActionCallback = NULL;
 static __strong NSPanel *SBNativePopoverPanel;
 static __strong NSWindowController *SBNativePreferencesWindowController;
+@class SBAccessibilityGuideController;
+static __strong SBAccessibilityGuideController *SBAccessibilityGuide;
 static __strong NSRunningApplication *SBPreviousFrontmostApplication;
 static id SBNativePopoverLocalEventMonitor;
 static id SBNativePopoverGlobalEventMonitor;
@@ -94,6 +97,45 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @interface SBNativeRowsDocumentView : NSView
 @end
 
+@interface SBAccessibilityGuidePanel : NSPanel
+@end
+
+@interface SBAccessibilityDragView : NSView <NSDraggingSource>
+@property(nonatomic, strong) NSURL *appURL;
+@property(nonatomic, strong) NSImage *appIcon;
+@property(nonatomic, strong) NSTextField *nameLabel;
+@property(nonatomic, strong) NSTextField *hintLabel;
+@property(nonatomic, assign) NSPoint mouseDownLocation;
+@property(nonatomic, assign) BOOL dragStarted;
+@property(nonatomic, assign) BOOL pressed;
+@property(nonatomic, copy) void (^draggingChanged)(BOOL dragging);
+- (instancetype)initWithAppURL:(NSURL *)appURL;
+- (void)updateName:(NSString *)name hint:(NSString *)hint fallback:(NSString *)fallback;
+@end
+
+@interface SBAccessibilityGuideController : NSObject
+@property(nonatomic, strong) SBAccessibilityGuidePanel *panel;
+@property(nonatomic, strong) NSView *contentHostView;
+@property(nonatomic, strong) NSTextField *titleLabel;
+@property(nonatomic, strong) NSTextField *explanationLabel;
+@property(nonatomic, strong) NSTextField *privacyLabel;
+@property(nonatomic, strong) SBAccessibilityDragView *dragView;
+@property(nonatomic, strong) NSButton *closeButton;
+@property(nonatomic, strong) NSButton *quitButton;
+@property(nonatomic, strong) NSImageView *successIcon;
+@property(nonatomic, strong) NSTextField *successStatusLabel;
+@property(nonatomic, strong) NSDictionary *model;
+@property(nonatomic, strong) NSTimer *trackingTimer;
+@property(nonatomic, strong) NSTimer *permissionTimer;
+@property(nonatomic, assign) BOOL sawSystemSettings;
+@property(nonatomic, assign) BOOL handledInitialModel;
+@property(nonatomic, assign) BOOL showingSuccess;
+@property(nonatomic, assign) BOOL lastKnownTrusted;
+- (void)updateModel:(NSDictionary *)model;
+- (void)showOpeningSystemSettings:(BOOL)openSettings;
+- (void)hide;
+@end
+
 @interface SBNativePopoverController : NSViewController
 @property(nonatomic, strong) NSDictionary *model;
 @property(nonatomic, strong) NSMutableArray<SBNativeControlTarget *> *controlTargets;
@@ -138,6 +180,7 @@ static void SBActivateForNativePopover(void) {
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+static void SBShowNativePopover(BOOL persistent);
 static void SBHideNativePopover(BOOL restorePreviousApplication);
 
 static void SBRestorePreviousApplicationAfterPopover(void) {
@@ -337,6 +380,643 @@ static NSImage *SBSymbol(NSString *name, CGFloat size, NSFontWeight weight) {
     }
     return nil;
 }
+
+static NSURL *SBAccessibilityApplicationURL(void) {
+    NSURL *url = NSBundle.mainBundle.bundleURL;
+    if (url == nil || ![url.pathExtension.lowercaseString isEqualToString:@"app"] ||
+        ![NSFileManager.defaultManager fileExistsAtPath:url.path]) {
+        return nil;
+    }
+    return url;
+}
+
+static BOOL SBOpenAccessibilitySystemSettings(void) {
+    NSURL *url = [NSURL URLWithString:
+        @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+    return url != nil && [NSWorkspace.sharedWorkspace openURL:url];
+}
+
+static BOOL SBRequestAccessibilityPrompt(void) {
+    if (AXIsProcessTrusted()) return YES;
+    NSDictionary *options = @{
+        (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES,
+    };
+    return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
+static NSRect SBAppKitRectFromCGWindowRect(CGRect cgRect) {
+    NSScreen *bestScreen = nil;
+    CGRect bestDisplayBounds = CGRectZero;
+    CGFloat bestArea = 0.0;
+    for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *screenNumber = screen.deviceDescription[@"NSScreenNumber"];
+        if (![screenNumber isKindOfClass:NSNumber.class]) continue;
+        CGRect displayBounds = CGDisplayBounds((CGDirectDisplayID)screenNumber.unsignedIntValue);
+        CGRect intersection = CGRectIntersection(displayBounds, cgRect);
+        CGFloat area = CGRectIsNull(intersection)
+            ? 0.0
+            : NSWidth(intersection) * NSHeight(intersection);
+        if (area > bestArea) {
+            bestArea = area;
+            bestScreen = screen;
+            bestDisplayBounds = displayBounds;
+        }
+    }
+    if (bestScreen == nil) return NSRectFromCGRect(cgRect);
+
+    CGFloat localX = CGRectGetMinX(cgRect) - CGRectGetMinX(bestDisplayBounds);
+    CGFloat localY = CGRectGetMinY(cgRect) - CGRectGetMinY(bestDisplayBounds);
+    return NSMakeRect(NSMinX(bestScreen.frame) + localX,
+                      NSMaxY(bestScreen.frame) - localY - CGRectGetHeight(cgRect),
+                      CGRectGetWidth(cgRect), CGRectGetHeight(cgRect));
+}
+
+static NSRect SBAccessibilitySystemSettingsFrame(void) {
+    NSArray<NSRunningApplication *> *settingsApps =
+        [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.systempreferences"];
+    if (settingsApps.count == 0) return NSZeroRect;
+
+    NSMutableSet<NSNumber *> *processes = [NSMutableSet set];
+    for (NSRunningApplication *app in settingsApps) {
+        [processes addObject:@(app.processIdentifier)];
+    }
+    CFArrayRef windowInfo = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID);
+    if (windowInfo == NULL) return NSZeroRect;
+    NSArray<NSDictionary *> *windows = CFBridgingRelease(windowInfo);
+    NSRect bestFrame = NSZeroRect;
+    CGFloat bestArea = 0.0;
+    for (NSDictionary *info in windows) {
+        NSNumber *ownerPID = info[(__bridge NSString *)kCGWindowOwnerPID];
+        NSNumber *layer = info[(__bridge NSString *)kCGWindowLayer];
+        NSDictionary *bounds = info[(__bridge NSString *)kCGWindowBounds];
+        if (![processes containsObject:ownerPID] || layer.integerValue != 0 ||
+            ![bounds isKindOfClass:NSDictionary.class]) continue;
+        CGRect cgFrame = CGRectZero;
+        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)bounds,
+                                                     &cgFrame) ||
+            cgFrame.size.width < 200.0 || cgFrame.size.height < 200.0) continue;
+        CGFloat area = cgFrame.size.width * cgFrame.size.height;
+        if (area > bestArea) {
+            bestArea = area;
+            bestFrame = SBAppKitRectFromCGWindowRect(cgFrame);
+        }
+    }
+    return bestFrame;
+}
+
+@implementation SBAccessibilityGuidePanel
+- (BOOL)canBecomeKeyWindow { return NO; }
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+
+@implementation SBAccessibilityDragView
+- (instancetype)initWithAppURL:(NSURL *)appURL {
+    self = [super initWithFrame:NSZeroRect];
+    if (self == nil) return nil;
+    self.appURL = appURL;
+    self.appIcon = appURL != nil
+        ? [NSWorkspace.sharedWorkspace iconForFile:appURL.path]
+        : NSApplication.sharedApplication.applicationIconImage;
+    self.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSImageView *iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    iconView.translatesAutoresizingMaskIntoConstraints = NO;
+    iconView.image = self.appIcon;
+    iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+    iconView.accessibilityElement = NO;
+    [self addSubview:iconView];
+
+    self.nameLabel = SBLabel(@"OneTouch",
+        [NSFont systemFontOfSize:16.0 weight:NSFontWeightSemibold], NSColor.labelColor);
+    self.nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.hintLabel = SBLabel(@"拖入辅助功能列表",
+        [NSFont systemFontOfSize:14.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.hintLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    NSStackView *labels = [NSStackView stackViewWithViews:@[self.nameLabel, self.hintLabel]];
+    labels.translatesAutoresizingMaskIntoConstraints = NO;
+    labels.orientation = NSUserInterfaceLayoutOrientationVertical;
+    labels.alignment = NSLayoutAttributeLeading;
+    labels.spacing = 2.0;
+    [self addSubview:labels];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [iconView.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16.0],
+        [iconView.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        [iconView.widthAnchor constraintEqualToConstant:48.0],
+        [iconView.heightAnchor constraintEqualToConstant:48.0],
+        [labels.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:14.0],
+        [labels.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        [labels.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor
+                                                         constant:-16.0],
+    ]];
+
+    self.accessibilityElement = YES;
+    self.accessibilityRole = NSAccessibilityButtonRole;
+    return self;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    NSRect borderRect = NSInsetRect(self.bounds, 0.5, 0.5);
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:borderRect
+                                                         xRadius:12.0
+                                                         yRadius:12.0];
+    [NSColor.controlBackgroundColor setFill];
+    [path fill];
+    if (self.pressed) {
+        [NSColor.unemphasizedSelectedContentBackgroundColor setFill];
+        [path fill];
+    }
+    [NSColor.quaternaryLabelColor setStroke];
+    path.lineWidth = 1.0;
+    [path stroke];
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    (void)event;
+    return YES;
+}
+
+- (void)updateName:(NSString *)name hint:(NSString *)hint fallback:(NSString *)fallback {
+    self.nameLabel.stringValue = name.length > 0 ? name : @"OneTouch";
+    self.hintLabel.stringValue = self.appURL != nil ? (hint ?: @"") : (fallback ?: @"");
+    self.accessibilityLabel = self.nameLabel.stringValue;
+    self.accessibilityHelp = self.hintLabel.stringValue;
+}
+
+- (void)resetCursorRects {
+    [super resetCursorRects];
+    if (self.appURL != nil) [self addCursorRect:self.bounds cursor:NSCursor.openHandCursor];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    self.mouseDownLocation = [self convertPoint:event.locationInWindow fromView:nil];
+    self.dragStarted = NO;
+    self.pressed = self.appURL != nil;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    if (self.appURL == nil || self.dragStarted) return;
+    NSPoint current = [self convertPoint:event.locationInWindow fromView:nil];
+    CGFloat distance = hypot(current.x - self.mouseDownLocation.x,
+                             current.y - self.mouseDownLocation.y);
+    if (distance < 8.0) return;
+    self.dragStarted = YES;
+    self.pressed = NO;
+    [self setNeedsDisplay:YES];
+
+    NSBitmapImageRep *representation = [self bitmapImageRepForCachingDisplayInRect:self.bounds];
+    [self cacheDisplayInRect:self.bounds toBitmapImageRep:representation];
+    NSImage *snapshot = [[NSImage alloc] initWithSize:self.bounds.size];
+    if (representation != nil) [snapshot addRepresentation:representation];
+
+    NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:self.appURL];
+    [item setDraggingFrame:self.bounds contents:snapshot];
+    NSDraggingSession *session = [self beginDraggingSessionWithItems:@[item]
+                                                               event:event
+                                                              source:self];
+    session.animatesToStartingPositionsOnCancelOrFail = YES;
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    (void)event;
+    self.dragStarted = NO;
+    self.pressed = NO;
+    [self setNeedsDisplay:YES];
+}
+
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session
+ sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    (void)session;
+    return context == NSDraggingContextOutsideApplication ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+- (void)draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)screenPoint {
+    (void)session;
+    (void)screenPoint;
+    if (self.draggingChanged != nil) self.draggingChanged(YES);
+}
+
+- (void)draggingSession:(NSDraggingSession *)session
+            endedAtPoint:(NSPoint)screenPoint
+               operation:(NSDragOperation)operation {
+    (void)session;
+    (void)screenPoint;
+    (void)operation;
+    self.dragStarted = NO;
+    self.pressed = NO;
+    [self setNeedsDisplay:YES];
+    if (self.draggingChanged != nil) self.draggingChanged(NO);
+}
+@end
+
+@implementation SBAccessibilityGuideController
+static const CGFloat SBAccessibilityGuideWidth = 420.0;
+static const CGFloat SBAccessibilityGuideHeight = 242.0;
+
+- (instancetype)init {
+    self = [super init];
+    if (self == nil) return nil;
+    self.model = @{
+        @"title": @"开启辅助功能权限",
+        @"explanation": @"只需授权一次，之后使用 OneTouch 控制时不会再被打断。",
+        @"privacy": @"仅执行你主动选择的控制，不会记录或上传键盘内容。",
+        @"appName": @"OneTouch",
+        @"dragHint": @"拖入辅助功能列表",
+        @"fallback": @"请使用 + 选择 OneTouch.app",
+        @"close": @"关闭",
+        @"quit": @"退出 OneTouch",
+        @"successTitle": @"辅助功能已开启",
+        @"successStatus": @"OneTouch 已准备就绪。",
+    };
+    [self buildPanel];
+    self.lastKnownTrusted = AXIsProcessTrusted();
+    self.permissionTimer = [NSTimer timerWithTimeInterval:0.5
+                                                  target:self
+                                                selector:@selector(permissionTick:)
+                                                userInfo:nil
+                                                 repeats:YES];
+    [NSRunLoop.mainRunLoop addTimer:self.permissionTimer
+                            forMode:NSRunLoopCommonModes];
+    return self;
+}
+
+- (void)buildPanel {
+    self.panel = [[SBAccessibilityGuidePanel alloc]
+        initWithContentRect:NSMakeRect(0, 0, SBAccessibilityGuideWidth,
+                                      SBAccessibilityGuideHeight)
+                  styleMask:NSWindowStyleMaskTitled |
+                            NSWindowStyleMaskFullSizeContentView |
+                            NSWindowStyleMaskNonactivatingPanel
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    self.panel.floatingPanel = YES;
+    self.panel.level = NSFloatingWindowLevel;
+    self.panel.hidesOnDeactivate = NO;
+    self.panel.opaque = NO;
+    self.panel.backgroundColor = NSColor.clearColor;
+    self.panel.hasShadow = YES;
+    self.panel.releasedWhenClosed = NO;
+    self.panel.excludedFromWindowsMenu = YES;
+    self.panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+        NSWindowCollectionBehaviorFullScreenAuxiliary |
+        NSWindowCollectionBehaviorTransient |
+        NSWindowCollectionBehaviorIgnoresCycle;
+    self.panel.animationBehavior = NSWindowAnimationBehaviorNone;
+    self.panel.title = @"OneTouch";
+    self.panel.titleVisibility = NSWindowTitleHidden;
+    self.panel.titlebarAppearsTransparent = YES;
+    [self.panel standardWindowButton:NSWindowCloseButton].hidden = YES;
+    [self.panel standardWindowButton:NSWindowMiniaturizeButton].hidden = YES;
+    [self.panel standardWindowButton:NSWindowZoomButton].hidden = YES;
+    if (@available(macOS 11.0, *)) {
+        self.panel.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+    }
+
+    NSRect frame = NSMakeRect(0, 0, SBAccessibilityGuideWidth,
+                              SBAccessibilityGuideHeight);
+    if (@available(macOS 26.0, *)) {
+        NSGlassEffectView *glass = [[NSGlassEffectView alloc] initWithFrame:frame];
+        glass.style = NSGlassEffectViewStyleRegular;
+        glass.tintColor = nil;
+        NSView *content = [[NSView alloc] initWithFrame:frame];
+        content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        glass.contentView = content;
+        self.contentHostView = content;
+        self.panel.contentView = glass;
+    } else {
+        NSVisualEffectView *effect = [[NSVisualEffectView alloc] initWithFrame:frame];
+        effect.material = NSVisualEffectMaterialPopover;
+        effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        effect.state = NSVisualEffectStateActive;
+        self.contentHostView = effect;
+        self.panel.contentView = effect;
+    }
+
+    self.closeButton = [NSButton buttonWithImage:SBSymbol(@"xmark", 10.0,
+                                                           NSFontWeightMedium)
+                                           target:self
+                                           action:@selector(closePressed:)];
+    self.closeButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.closeButton.bezelStyle = NSBezelStyleAccessoryBarAction;
+    self.closeButton.imagePosition = NSImageOnly;
+    self.closeButton.showsBorderOnlyWhileMouseInside = YES;
+    [self.contentHostView addSubview:self.closeButton];
+
+    self.titleLabel = SBLabel(self.model[@"title"],
+        [NSFont systemFontOfSize:16.0 weight:NSFontWeightSemibold], NSColor.labelColor);
+    self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.contentHostView addSubview:self.titleLabel];
+
+    self.explanationLabel = SBLabel(self.model[@"explanation"],
+        [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.explanationLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.explanationLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.explanationLabel.maximumNumberOfLines = 2;
+    [self.contentHostView addSubview:self.explanationLabel];
+
+    self.dragView = [[SBAccessibilityDragView alloc]
+        initWithAppURL:SBAccessibilityApplicationURL()];
+    __weak SBAccessibilityGuideController *weakSelf = self;
+    self.dragView.draggingChanged = ^(BOOL dragging) {
+        SBAccessibilityGuideController *strongSelf = weakSelf;
+        if (strongSelf == nil) return;
+        strongSelf.panel.ignoresMouseEvents = dragging;
+        if (dragging) {
+            [strongSelf.panel orderBack:nil];
+        } else if (strongSelf.panel.isVisible) {
+            [strongSelf.panel orderFrontRegardless];
+        }
+    };
+    [self.contentHostView addSubview:self.dragView];
+
+    self.successIcon = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    self.successIcon.translatesAutoresizingMaskIntoConstraints = NO;
+    self.successIcon.image = SBSymbol(@"checkmark.circle.fill", 34.0,
+                                      NSFontWeightRegular);
+    self.successIcon.contentTintColor = NSColor.systemGreenColor;
+    self.successIcon.hidden = YES;
+    self.successIcon.accessibilityLabel = self.model[@"successTitle"];
+    [self.contentHostView addSubview:self.successIcon];
+
+    self.successStatusLabel = SBLabel(self.model[@"successStatus"],
+        [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.successStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.successStatusLabel.alignment = NSTextAlignmentCenter;
+    self.successStatusLabel.hidden = YES;
+    [self.contentHostView addSubview:self.successStatusLabel];
+
+    self.privacyLabel = SBLabel(self.model[@"privacy"],
+        [NSFont systemFontOfSize:11.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.privacyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.privacyLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.privacyLabel.maximumNumberOfLines = 2;
+    [self.contentHostView addSubview:self.privacyLabel];
+
+    self.quitButton = [NSButton buttonWithTitle:self.model[@"quit"] ?: @""
+                                          target:self
+                                          action:@selector(quitPressed:)];
+    self.quitButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.quitButton.bezelStyle = NSBezelStyleRounded;
+    self.quitButton.controlSize = NSControlSizeSmall;
+    [self.contentHostView addSubview:self.quitButton];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.closeButton.topAnchor constraintEqualToAnchor:self.contentHostView.topAnchor constant:9.0],
+        [self.closeButton.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                         constant:-9.0],
+        [self.closeButton.widthAnchor constraintEqualToConstant:24.0],
+        [self.closeButton.heightAnchor constraintEqualToConstant:24.0],
+        [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
+                                                       constant:20.0],
+        [self.titleLabel.topAnchor constraintEqualToAnchor:self.contentHostView.topAnchor
+                                                   constant:20.0],
+        [self.titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.closeButton.leadingAnchor
+                                                                 constant:-8.0],
+        [self.explanationLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
+        [self.explanationLabel.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                               constant:-20.0],
+        [self.explanationLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor
+                                                          constant:8.0],
+        [self.dragView.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
+                                                     constant:20.0],
+        [self.dragView.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                      constant:-20.0],
+        [self.dragView.topAnchor constraintEqualToAnchor:self.explanationLabel.bottomAnchor
+                                                  constant:14.0],
+        [self.dragView.heightAnchor constraintEqualToConstant:68.0],
+        [self.privacyLabel.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
+                                                         constant:20.0],
+        [self.privacyLabel.topAnchor constraintEqualToAnchor:self.dragView.bottomAnchor
+                                                     constant:12.0],
+        [self.privacyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.quitButton.leadingAnchor
+                                                                    constant:-12.0],
+        [self.privacyLabel.bottomAnchor constraintLessThanOrEqualToAnchor:self.contentHostView.bottomAnchor
+                                                                  constant:-16.0],
+        [self.quitButton.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                        constant:-20.0],
+        [self.quitButton.bottomAnchor constraintEqualToAnchor:self.contentHostView.bottomAnchor
+                                                      constant:-16.0],
+        [self.successIcon.centerXAnchor constraintEqualToAnchor:self.contentHostView.centerXAnchor],
+        [self.successIcon.centerYAnchor constraintEqualToAnchor:self.contentHostView.centerYAnchor
+                                                       constant:-8.0],
+        [self.successIcon.widthAnchor constraintEqualToConstant:48.0],
+        [self.successIcon.heightAnchor constraintEqualToConstant:48.0],
+        [self.successStatusLabel.topAnchor constraintEqualToAnchor:self.successIcon.bottomAnchor
+                                                           constant:10.0],
+        [self.successStatusLabel.centerXAnchor constraintEqualToAnchor:self.contentHostView.centerXAnchor],
+        [self.successStatusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.contentHostView.leadingAnchor
+                                                                            constant:20.0],
+        [self.successStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.contentHostView.trailingAnchor
+                                                                           constant:-20.0],
+    ]];
+    [self applyCurrentModel];
+}
+
+- (void)applyCurrentModel {
+    if (self.showingSuccess) return;
+    self.titleLabel.stringValue = self.model[@"title"] ?: @"";
+    self.explanationLabel.stringValue = self.model[@"explanation"] ?: @"";
+    self.privacyLabel.stringValue = self.model[@"privacy"] ?: @"";
+    self.closeButton.toolTip = self.model[@"close"] ?: @"";
+    self.closeButton.accessibilityLabel = self.closeButton.toolTip;
+    self.quitButton.title = self.model[@"quit"] ?: @"";
+    self.quitButton.accessibilityLabel = self.quitButton.title;
+    [self.dragView updateName:self.model[@"appName"]
+                         hint:self.model[@"dragHint"]
+                     fallback:self.model[@"fallback"]];
+    self.dragView.hidden = NO;
+    self.explanationLabel.hidden = NO;
+    self.privacyLabel.hidden = NO;
+    self.quitButton.hidden = NO;
+    self.successIcon.hidden = YES;
+    self.successStatusLabel.hidden = YES;
+}
+
+- (void)updateModel:(NSDictionary *)model {
+    if (![model isKindOfClass:NSDictionary.class]) return;
+    self.model = model;
+    [self applyCurrentModel];
+    BOOL shouldAutoShow = !self.handledInitialModel && [model[@"autoShow"] boolValue];
+    self.handledInitialModel = YES;
+    if (shouldAutoShow && !AXIsProcessTrusted()) {
+        [self showOpeningSystemSettings:YES];
+    }
+}
+
+- (void)showOpeningSystemSettings:(BOOL)openSettings {
+    if (AXIsProcessTrusted()) {
+        [self hide];
+        return;
+    }
+    SBHideNativePopover(NO);
+    self.showingSuccess = NO;
+    [self applyCurrentModel];
+    self.sawSystemSettings = NO;
+    NSScreen *screen = NSScreen.mainScreen;
+    if (screen != nil) {
+        NSRect visible = screen.visibleFrame;
+        NSPoint origin = NSMakePoint(NSMaxX(visible) - SBAccessibilityGuideWidth - 24.0,
+                                    NSMaxY(visible) - SBAccessibilityGuideHeight - 24.0);
+        [self.panel setFrameOrigin:origin];
+    }
+    [self.panel orderFrontRegardless];
+    if (openSettings) {
+        // Register this exact signed app with TCC before opening the matching
+        // settings pane. The prompt is only requested from an explicit
+        // onboarding/recovery action, never from the background polling timer.
+        SBRequestAccessibilityPrompt();
+        SBOpenAccessibilitySystemSettings();
+    }
+    [self startTracking];
+}
+
+- (void)startTracking {
+    [self.trackingTimer invalidate];
+    self.trackingTimer = [NSTimer scheduledTimerWithTimeInterval:0.15
+                                                          target:self
+                                                        selector:@selector(trackingTick:)
+                                                        userInfo:nil
+                                                         repeats:YES];
+    [self trackingTick:self.trackingTimer];
+}
+
+- (void)permissionTick:(NSTimer *)timer {
+    (void)timer;
+    BOOL trusted = AXIsProcessTrusted();
+    if (trusted) {
+        if (!self.lastKnownTrusted && self.panel.isVisible && !self.showingSuccess) {
+            [self showSuccess];
+        }
+    } else if (self.lastKnownTrusted) {
+        SBHideNativePopover(NO);
+        [self hide];
+    }
+    self.lastKnownTrusted = trusted;
+}
+
+- (void)trackingTick:(NSTimer *)timer {
+    (void)timer;
+    NSArray *settingsApps =
+        [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.systempreferences"];
+    if (settingsApps.count == 0) {
+        if (self.sawSystemSettings) [self hide];
+        return;
+    }
+    self.sawSystemSettings = YES;
+    NSRect settingsFrame = SBAccessibilitySystemSettingsFrame();
+    if (NSEqualRects(settingsFrame, NSZeroRect)) return;
+    [self positionNextToSystemSettings:settingsFrame];
+}
+
+- (void)positionNextToSystemSettings:(NSRect)settingsFrame {
+    NSScreen *screen = nil;
+    CGFloat bestArea = 0.0;
+    for (NSScreen *candidate in NSScreen.screens) {
+        NSRect intersection = NSIntersectionRect(candidate.frame, settingsFrame);
+        CGFloat area = NSWidth(intersection) * NSHeight(intersection);
+        if (area > bestArea) {
+            bestArea = area;
+            screen = candidate;
+        }
+    }
+    screen = screen ?: NSScreen.mainScreen;
+    if (screen == nil) return;
+    NSRect visible = screen.visibleFrame;
+    const CGFloat gap = 8.0;
+    CGFloat rightSpace = NSMaxX(visible) - NSMaxX(settingsFrame);
+    CGFloat bottomSpace = NSMinY(settingsFrame) - NSMinY(visible);
+    NSPoint origin;
+    if (rightSpace >= SBAccessibilityGuideWidth + gap) {
+        origin.x = NSMaxX(settingsFrame) + gap;
+        origin.y = NSMaxY(settingsFrame) - SBAccessibilityGuideHeight;
+    } else if (bottomSpace >= SBAccessibilityGuideHeight + gap) {
+        origin.x = NSMaxX(settingsFrame) - SBAccessibilityGuideWidth;
+        origin.y = NSMinY(settingsFrame) - SBAccessibilityGuideHeight - gap;
+    } else {
+        origin.x = NSMaxX(settingsFrame) - SBAccessibilityGuideWidth - 18.0;
+        origin.y = NSMinY(settingsFrame) + 18.0;
+    }
+    origin.x = MIN(MAX(origin.x, NSMinX(visible)),
+                   NSMaxX(visible) - SBAccessibilityGuideWidth);
+    origin.y = MIN(MAX(origin.y, NSMinY(visible)),
+                   NSMaxY(visible) - SBAccessibilityGuideHeight);
+    origin.x = round(origin.x);
+    origin.y = round(origin.y);
+    if (NSEqualPoints(self.panel.frame.origin, origin)) return;
+    if (NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+        [self.panel setFrameOrigin:origin];
+    } else {
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+            context.duration = 0.12;
+            context.allowsImplicitAnimation = YES;
+            [self.panel.animator setFrameOrigin:origin];
+        } completionHandler:nil];
+    }
+}
+
+- (void)showSuccess {
+    if (self.showingSuccess) return;
+    self.showingSuccess = YES;
+    [self.trackingTimer invalidate];
+    self.trackingTimer = nil;
+    self.titleLabel.stringValue = self.model[@"successTitle"] ?: @"";
+    self.explanationLabel.hidden = YES;
+    self.dragView.hidden = YES;
+    self.privacyLabel.hidden = YES;
+    self.quitButton.hidden = YES;
+    self.successIcon.accessibilityLabel = self.titleLabel.stringValue;
+    self.successIcon.hidden = NO;
+    self.successStatusLabel.stringValue = self.model[@"successStatus"] ?: @"";
+    self.successStatusLabel.hidden = NO;
+    if (!NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+        self.successIcon.alphaValue = 0.0;
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+            context.duration = 0.18;
+            self.successIcon.animator.alphaValue = 1.0;
+        } completionHandler:nil];
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (!self.showingSuccess) return;
+        [self hide];
+        SBShowNativePopover(NO);
+    });
+}
+
+- (void)hide {
+    [self.trackingTimer invalidate];
+    self.trackingTimer = nil;
+    self.sawSystemSettings = NO;
+    self.showingSuccess = NO;
+    self.panel.ignoresMouseEvents = NO;
+    [self.panel orderOut:nil];
+    [self applyCurrentModel];
+}
+
+- (void)closePressed:(id)sender {
+    (void)sender;
+    [self hide];
+}
+
+- (void)quitPressed:(id)sender {
+    (void)sender;
+    [NSApp terminate:nil];
+}
+
+@end
 
 // OneTouch native layout contract. Row controls always occupy a dedicated
 // trailing column, while the footer uses fixed side actions and a flexible
@@ -680,7 +1360,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     quit.showsBorderOnlyWhileMouseInside = YES;
 
     NSArray<NSButton *> *buttons = @[settings, customise, quit];
-    NSArray<NSString *> *actions = @[@"settings", @"settings", @"quit"];
+    NSArray<NSString *> *actions = @[@"settings", @"customise", @"quit"];
     for (NSUInteger index = 0; index < buttons.count; index += 1) {
         buttons[index].buttonType = NSButtonTypeMomentaryPushIn;
         buttons[index].bordered = YES;
@@ -1062,7 +1742,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     [self.languagePopup.widthAnchor constraintEqualToConstant:184.0].active = YES;
 
     self.loginSwitch = [NSSwitch new];
-    self.loginSwitch.controlSize = NSControlSizeRegular;
+    self.loginSwitch.controlSize = NSControlSizeSmall;
     self.loginSwitch.target = self;
     self.loginSwitch.action = @selector(loginChanged:);
 
@@ -1736,6 +2416,64 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 
 @end
 
+int sb_accessibility_is_trusted(void) {
+    return AXIsProcessTrusted() ? 1 : 0;
+}
+
+int sb_accessibility_guide_create(void) {
+    __block int result = 0;
+    SBRunOnMainSync(^{
+        if (SBAccessibilityGuide == nil) {
+            SBAccessibilityGuide = [SBAccessibilityGuideController new];
+        }
+        if (SBAccessibilityGuide.panel == nil) result = -1;
+    });
+    return result;
+}
+
+int sb_accessibility_guide_update_json(const char *model_json) {
+    if (model_json == NULL) return -2;
+    NSData *data = [[NSData alloc] initWithBytes:model_json length:strlen(model_json)];
+    NSError *error = nil;
+    id model = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+    if (![model isKindOfClass:NSDictionary.class] || error != nil) return -3;
+
+    __block int result = 0;
+    SBRunOnMainSync(^{
+        if (SBAccessibilityGuide == nil) {
+            SBAccessibilityGuide = [SBAccessibilityGuideController new];
+        }
+        if (SBAccessibilityGuide == nil) {
+            result = -1;
+            return;
+        }
+        [SBAccessibilityGuide updateModel:model];
+    });
+    return result;
+}
+
+int sb_accessibility_guide_show(void) {
+    __block int result = 0;
+    SBRunOnMainSync(^{
+        if (AXIsProcessTrusted()) return;
+        if (SBAccessibilityGuide == nil) {
+            SBAccessibilityGuide = [SBAccessibilityGuideController new];
+        }
+        if (SBAccessibilityGuide == nil) {
+            result = -1;
+            return;
+        }
+        [SBAccessibilityGuide showOpeningSystemSettings:YES];
+    });
+    return result;
+}
+
+void sb_accessibility_guide_hide(void) {
+    SBRunOnMainSync(^{
+        [SBAccessibilityGuide hide];
+    });
+}
+
 int sb_status_item_create(SBStatusItemCallback callback) {
     __block int result = 0;
     SBRunOnMainSync(^{
@@ -2068,7 +2806,7 @@ int sb_native_preferences_update_json(const char *model_json) {
     return result;
 }
 
-int sb_native_preferences_show(void) {
+int sb_native_preferences_show(const char *pane) {
     __block int result = 0;
     SBRunOnMainSync(^{
         NSWindow *window = SBNativePreferencesWindowController.window;
@@ -2083,6 +2821,19 @@ int sb_native_preferences_show(void) {
             [window.contentViewController isKindOfClass:SBNativePreferencesController.class]
                 ? (SBNativePreferencesController *)window.contentViewController
                 : nil;
+        NSString *requestedPane = pane == NULL
+            ? @"general"
+            : [NSString stringWithUTF8String:pane];
+        NSDictionary<NSString *, NSNumber *> *paneIndexes = @{
+            @"general": @0,
+            @"customise": @1,
+            @"shortcuts": @2,
+            @"about": @3,
+        };
+        NSNumber *requestedIndex = paneIndexes[requestedPane ?: @"general"];
+        controller.selectedTabViewItemIndex = requestedIndex != nil
+            ? requestedIndex.integerValue
+            : 0;
         [controller resizeWindowForSelectedTabAnimated:NO];
         // AppKit can restore the previously selected toolbar item after the
         // window becomes visible. Re-read that final selection on the next run
@@ -2706,8 +3457,7 @@ static AXUIElementRef SBAXCopyControlCenterMenuItem(AXUIElementRef appElement,
 
 static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkboxIdentifier,
                                       BOOL enabled, BOOL *actualState, char **error_output) {
-    NSDictionary *options = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
-    if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) {
+    if (!AXIsProcessTrusted()) {
         SBCopyError(error_output, @"Accessibility permission is required for this control");
         return -1;
     }
@@ -2850,8 +3600,7 @@ int sb_focus_set(int enabled, SBFeatureStatus *status, char **error_output) {
             return 0;
         }
 
-        NSDictionary *options = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
-        if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) {
+        if (!AXIsProcessTrusted()) {
             SBCopyError(error_output, @"Accessibility permission is required to change Focus");
             SBWriteFeatureStatus(status, YES, YES, knownState.boolValue);
             return -1;
@@ -3264,8 +4013,7 @@ static CGEventRef SBKeyboardCallback(CGEventTapProxy proxy, CGEventType type, CG
 
 int sb_keyboard_lock_start(char **error_output) {
     if (SBKeyboardActive) return 0;
-    NSDictionary *options = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
-    if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) {
+    if (!AXIsProcessTrusted()) {
         SBCopyError(error_output, @"Accessibility permission is required for keyboard cleaning");
         return -1;
     }
