@@ -15,6 +15,7 @@ const ACTION_CONTROL_IDS = new Set([
   'hideWindow',
   'displaySleep',
   'lockScreen',
+  'quitApps',
 ]);
 
 const CHOICE_CONTROL_IDS = new Set(['resolution']);
@@ -42,4 +43,9 @@ export function controlSwitchState(kind, currentState, { pending = false, comple
     checked: kind === CONTROL_KINDS.TOGGLE && Boolean(currentState),
     locked: false,
   };
+}
+
+export function quitAppsRequestCount(message) {
+  const match = /^quit-apps-requested:(\d+)$/.exec(String(message || ''));
+  return match ? Number(match[1]) : null;
 }

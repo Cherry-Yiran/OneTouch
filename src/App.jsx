@@ -39,6 +39,7 @@ import {
   CONTROL_KINDS,
   controlKind,
   controlSwitchState,
+  quitAppsRequestCount,
   usesSwitchAffordance,
 } from './controlInteractions.js';
 import {
@@ -96,9 +97,15 @@ import {
 
 const COPY = {
   en: {
+    quitAppsNone: 'No other apps are open',
+    quitAppsRequested: 'Quit requested · {count} apps',
+    quitApps: ['Quit other apps', 'Keeps your current app, OneTouch and Finder'],
     preview: 'Preview mode', connected: 'macOS connected', available: 'available', unavailableFeature: 'Not available', unknownState: 'Click once to authorise and read the current state', title: 'OneTouch', subtitle: 'Quick controls', customise: 'Customise', quit: 'Quit', settings: 'Settings', close: 'Close menu', outsideClose: 'Click outside to close', open: 'Open OneTouch menu', enabled: 'enabled', disabled: 'disabled', processing: 'Processing…', completed: 'Completed', trashAlreadyEmpty: 'Trash is already empty', runAction: 'Run', chooseAction: 'Choose', openSettings: 'Open', confirmAction: 'Confirm', confirmHint: 'Click Confirm again to continue', openingSettings: 'Opening System Settings', unavailable: 'The macOS command could not be completed', permissionRequired: 'This control needs macOS permission', airpodsUnpaired: 'No paired Bluetooth headphones found', airpodsDisconnected: 'Not connected', resolutionPanelTitle: 'Screen resolution', resolutionBack: 'Back to controls', resolutionLoading: 'Reading available resolutions…', resolutionNoDisplay: 'No display', resolutionNoModes: 'No compatible resolutions were found.', resolutionDisplays: 'Displays', resolutionOptions: 'Available resolutions', resolutionHiDpi: 'HiDPI', resolutionStandard: 'Standard', retry: 'Try again', timerTitle: 'Turn off timer', timerBack: 'Back to controls', timerPrompt: 'Choose how long this stays on', timer30m: '30 minutes', timer1h: '1 hour', timer2h: '2 hours', timer4h: '4 hours', timerToday: 'Until the end of today', timerNone: 'No timer', timerNoneNote: 'Keep the current state until you change it', timerTurnsOff: 'OneTouch will turn it off automatically', timerExpired: 'Timer finished', timerRetry: 'Could not turn it off · retrying in 1 minute', timerLongPressHint: 'Click to choose a duration', diskLongPressHint: 'Hold to manage protected disks', diskPanelTitle: 'Protected disks', diskPanelSubtitle: 'Protected disks stay connected', diskBack: 'Back to controls', diskLoading: 'Reading ejectable disks…', diskNone: 'No ejectable disks or disk images are mounted.', diskProtected: 'Protected — OneTouch will skip this disk', diskWillEject: 'Will be ejected by the main switch', desktop: ['Hide desktop icons', 'Finder'], darkMode: ['Dark mode', 'Click the switch to choose a duration'], awake: ['Keep awake', 'Click the switch to choose a duration'], airpods: ['Bluetooth headphones', 'Automatically uses the connected or most recent audio device'], dnd: ['Focus', 'Click the switch to choose a duration'], nightShift: ['Night Shift', 'Warm the display colours'], screenSaver: ['Screen saver', 'Start a calm screen saver'], trueTone: ['True Tone', 'Match the display to ambient light'], frontApp: ['Switch front app', 'Bring the next app forward'], muteMic: ['Mute microphone', 'Restore the previous input volume when unmuted'], xcodeClean: ['Clean Xcode cache', 'Remove derived data'], emptyTrash: ['Empty Trash', 'Remove discarded files'], ejectDisk: ['Eject disks', 'Eject all · hold the switch to protect disks'], clipboard: ['Clear clipboard', 'Remove copied content'], hideWindow: ['Hide window', 'Hide the front app'], hideDock: ['Hide Dock', 'Show or hide the Dock'], lowPower: ['Low power mode', 'Reduce energy use'], highPower: ['High Power mode', 'Increase sustained performance on supported Macs'], music: ['Music playback', 'Play or pause the current queue'], spotify: ['Spotify playback', 'Play or pause Spotify'], hiddenFiles: ['Show hidden files', 'Reveal files in Finder'], displaySleep: ['Display sleep', 'Turn the display off'], resolution: ['Screen resolution', 'Choose directly in OneTouch'], hideWidgets: ['Hide desktop widgets', 'Keep the desktop clear in every workspace mode'], stageManager: ['Stage Manager', 'Organise open windows around the current task'], cleanScreen: ['Clean screen', 'Hold Esc to finish'], lockKeyboard: ['Lock keyboard', 'Use the menu to unlock'], lockScreen: ['Lock screen', 'Require your password'],
   },
   zh: {
+    quitAppsNone: '没有需要关闭的应用',
+    quitAppsRequested: '已请求关闭 {count} 个应用',
+    quitApps: ['关闭其他应用', '保留当前应用、OneTouch 与 Finder'],
     preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在处理中…', completed: '已完成', trashAlreadyEmpty: '垃圾桶已经空了', runAction: '执行', chooseAction: '选择', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', timerRetry: '关闭失败 · 1 分钟后重试', timerLongPressHint: '点击选择开启时长', diskLongPressHint: '长按管理受保护磁盘', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取可推出磁盘…', diskNone: '当前没有可推出的磁盘或磁盘映像。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '点击开关选择开启时长'], awake: ['保持唤醒', '点击开关选择开启时长'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '点击开关选择开启时长'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], ejectDisk: ['推出磁盘', '短按全部推出 · 长按保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
   },
 };
@@ -138,6 +145,7 @@ const KEYBOARD_CLEANING_COPY = Object.freeze({
 const SWITCHES = [
   { id: 'desktop', icon: Grid3X3 }, { id: 'darkMode', icon: MoonStar }, { id: 'awake', icon: Coffee }, { id: 'airpods', icon: Headphones }, { id: 'dnd', icon: BellOff }, { id: 'nightShift', icon: MoonStar }, { id: 'screenSaver', icon: MonitorUp }, { id: 'trueTone', icon: Sun },
   { id: 'frontApp', icon: AppWindowMac }, { id: 'muteMic', icon: MicOff }, { id: 'xcodeClean', icon: BrushCleaning }, { id: 'emptyTrash', icon: Trash2 }, { id: 'ejectDisk', icon: Disc3 }, { id: 'clipboard', icon: Paintbrush }, { id: 'hideWindow', icon: EyeOff }, { id: 'hideDock', icon: PanelTopClose }, { id: 'lowPower', icon: Zap }, { id: 'highPower', icon: Gauge }, { id: 'music', icon: Music2 }, { id: 'spotify', icon: AudioLines }, { id: 'hiddenFiles', icon: FolderOpen }, { id: 'displaySleep', icon: MonitorUp }, { id: 'resolution', icon: MonitorCog }, { id: 'hideWidgets', icon: LayoutDashboard }, { id: 'stageManager', icon: PanelsTopLeft }, { id: 'cleanScreen', icon: Eye }, { id: 'lockKeyboard', icon: Keyboard }, { id: 'lockScreen', icon: Lock },
+  { id: 'quitApps', icon: AppWindowMac },
 ].map((item) => ({ ...item, kind: controlKind(item.id) }));
 
 const NON_TOGGLE_CONTROL_IDS = SWITCHES
@@ -152,7 +160,7 @@ const TIMER_POPOVER_HEIGHT = 220;
 const TIMER_POPOVER_GAP = 6;
 const TIMER_POPOVER_MARGIN = 8;
 
-const INITIAL_SWITCHES = { desktop: true, darkMode: true, awake: false, airpods: true, dnd: true, nightShift: true, screenSaver: false, trueTone: true, frontApp: false, muteMic: false, xcodeClean: false, emptyTrash: false, ejectDisk: false, clipboard: false, hideWindow: false, hideDock: false, lowPower: false, highPower: false, music: false, spotify: false, hiddenFiles: false, displaySleep: false, resolution: false, hideWidgets: false, stageManager: false, cleanScreen: false, lockKeyboard: false, lockScreen: false };
+const INITIAL_SWITCHES = { desktop: true, darkMode: true, awake: false, airpods: true, dnd: true, nightShift: true, screenSaver: false, trueTone: true, frontApp: false, muteMic: false, xcodeClean: false, emptyTrash: false, ejectDisk: false, clipboard: false, hideWindow: false, hideDock: false, lowPower: false, highPower: false, music: false, spotify: false, hiddenFiles: false, displaySleep: false, resolution: false, hideWidgets: false, stageManager: false, cleanScreen: false, lockKeyboard: false, lockScreen: false, quitApps: false };
 
 const DEFAULT_VISIBLE_IDS = SWITCHES.slice(0, 8).map((item) => item.id);
 const ALL_SWITCH_IDS = SWITCHES.map((item) => item.id);
@@ -164,7 +172,7 @@ const NATIVE_SYMBOLS = Object.freeze({
   lowPower: 'bolt', highPower: 'gauge.with.dots.needle.67percent', music: 'music.note', spotify: 'waveform',
   hiddenFiles: 'folder', displaySleep: 'display', resolution: 'display.and.arrow.down',
   hideWidgets: 'rectangle.3.group', stageManager: 'squares.leading.rectangle',
-  cleanScreen: 'eye', lockKeyboard: 'keyboard', lockScreen: 'lock',
+  cleanScreen: 'eye', lockKeyboard: 'keyboard', lockScreen: 'lock', quitApps: 'rectangle.stack.badge.minus',
 });
 
 function restoreIds(storageKey, fallback, includeNewItems = false) {
@@ -340,6 +348,7 @@ function localiseNativeError(error, language, text) {
   if (/unavailable for the active display/i.test(message)) return '当前显示器无法使用此功能';
   if (/unsupported on this Mac/i.test(message)) return '这台 Mac 不支持此功能';
   if (/Spotify is not installed/i.test(message)) return '这台 Mac 尚未安装 Spotify';
+  if (/could not quit the open applications/i.test(message)) return 'macOS 无法关闭当前应用';
   if (/No paired (AirPods|Bluetooth audio device)/i.test(message)) return text.airpodsUnpaired;
   if (/(AirPods|Bluetooth audio device) operation is already in progress/i.test(message)) return '蓝牙耳机正在处理中，请稍候';
   if (/(AirPods|Bluetooth audio device) did not respond/i.test(message)) return '蓝牙耳机响应超时，请稍后重试';
@@ -871,9 +880,14 @@ export default function App() {
           if (remainingProgress > 0) {
             await new Promise((resolve) => window.setTimeout(resolve, remainingProgress));
           }
+          const quitAppsCount = id === 'quitApps' ? quitAppsRequestCount(result?.message) : null;
           const completionMessage = id === 'emptyTrash' && result?.message === 'trash-already-empty'
             ? text.trashAlreadyEmpty
-            : text.completed;
+            : quitAppsCount === 0
+              ? text.quitAppsNone
+              : quitAppsCount != null
+                ? text.quitAppsRequested.replace('{count}', String(quitAppsCount))
+                : text.completed;
           setAnnouncement(`${controlTitle}: ${completionMessage}`);
           setActionResultMessages((current) => ({ ...current, [id]: completionMessage }));
           setCompletedActionIds((current) => new Set(current).add(id));
