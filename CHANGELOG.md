@@ -2,6 +2,25 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.1] - 2026-08-03
+
+### 新增
+
+- 增加原生辅助功能授权引导，首次启动和权限失效后都能进入明确的恢复流程。
+- 增加发布签名检查，缺少稳定 Apple 签名身份时拒绝生成公开版本。
+
+### 改进
+
+- 授权成功后无需重启 OneTouch，会自动进入主控制面板。
+- “登录时启动”使用更紧凑的 macOS 原生小尺寸开关。
+- 设置窗口会在显示前选中目标标签，窗口标题和内容保持一致。
+
+### 修复
+
+- 修复更新后辅助功能开关看似开启、键盘清洁仍无法使用的问题。
+- 修复“设置”和“自定义”错误绑定到同一个入口的问题；“自定义”现在直接打开自定义面板。
+- 修复权限撤销后后台反复打开系统设置的问题。
+
 ## [0.3.0] - 2026-08-03
 
 ### 新增
@@ -49,6 +68,7 @@
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
+[0.3.1]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Cherry-Yiran/OneTouch/releases/tag/v0.1.0
