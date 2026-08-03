@@ -48,6 +48,11 @@ unsafe extern "C" {
         callback: Option<extern "C" fn(x: f64, y: f64, width: f64, height: f64)>,
     ) -> c_int;
     fn sb_status_item_is_visible() -> c_int;
+    fn sb_accessibility_is_trusted() -> c_int;
+    fn sb_accessibility_guide_create() -> c_int;
+    fn sb_accessibility_guide_update_json(model_json: *const c_char) -> c_int;
+    fn sb_accessibility_guide_show() -> c_int;
+    fn sb_accessibility_guide_hide();
     fn sb_native_popover_create(
         callback: Option<
             extern "C" fn(action: *const c_char, control_id: *const c_char, value: c_int),
@@ -1469,12 +1474,22 @@ async fn set_switch(
     enabled: bool,
     app: AppHandle,
 ) -> Result<SwitchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    #[cfg(target_os = "macos")]
+    require_accessibility_or_show_guide()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<NativeState>();
         set_switch_blocking(id, enabled, state.inner())
     })
     .await
-    .map_err(|error| format!("The system operation stopped unexpectedly: {error}"))?
+    .map_err(|error| format!("The system operation stopped unexpectedly: {error}"))?;
+    #[cfg(target_os = "macos")]
+    if result.is_err() && unsafe { sb_accessibility_is_trusted() } == 0 {
+        unsafe {
+            sb_native_popover_hide();
+            let _ = sb_accessibility_guide_show();
+        }
+    }
+    result
 }
 
 fn native_state_values(
@@ -1850,6 +1865,56 @@ fn update_native_preferences(model: Value) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn update_accessibility_guide(model: Value) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let json = serde_json::to_string(&model).map_err(|error| error.to_string())?;
+        let json = CString::new(json).map_err(|_| {
+            "The accessibility guide model contains an invalid null byte".to_string()
+        })?;
+        let result = unsafe { sb_accessibility_guide_update_json(json.as_ptr()) };
+        if result != 0 {
+            return Err(format!(
+                "macOS could not update the OneTouch accessibility guide ({result})"
+            ));
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = model;
+    Ok(())
+}
+
+#[tauri::command]
+fn show_accessibility_guide() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if unsafe { sb_accessibility_is_trusted() } != 0 {
+            unsafe { sb_accessibility_guide_hide() };
+            return Ok(false);
+        }
+        let result = unsafe { sb_accessibility_guide_show() };
+        return if result == 0 {
+            Ok(true)
+        } else {
+            Err(format!(
+                "macOS could not show the OneTouch accessibility guide ({result})"
+            ))
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+fn require_accessibility_or_show_guide() -> Result<(), String> {
+    if unsafe { sb_accessibility_is_trusted() } != 0 {
+        return Ok(());
+    }
+    let _ = unsafe { sb_accessibility_guide_show() };
+    Err("Accessibility permission is required to use OneTouch".to_string())
+}
+
 fn position_popover(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -1945,6 +2010,7 @@ fn show_popover_with_native_animation(_window: &WebviewWindow) -> bool {
 fn show_popover(app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        require_accessibility_or_show_guide()?;
         let result = unsafe { sb_native_popover_show() };
         if result == 0 {
             if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
@@ -1970,6 +2036,8 @@ fn show_popover(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn show_legacy_popover(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    require_accessibility_or_show_guide()?;
     #[cfg(target_os = "macos")]
     unsafe {
         sb_native_popover_hide();
@@ -2031,6 +2099,13 @@ extern "C" fn native_status_item_clicked(x: f64, y: f64, width: f64, height: f64
     );
     if let Some(window) = app.get_webview_window("popover") {
         let _ = window.hide();
+    }
+    if unsafe { sb_accessibility_is_trusted() } == 0 {
+        unsafe {
+            sb_native_popover_hide();
+        }
+        let _ = unsafe { sb_accessibility_guide_show() };
+        return;
     }
     // The Objective-C controller always exists before the status item can be
     // clicked. Show its loading model if React has not supplied live state yet;
@@ -2168,6 +2243,8 @@ pub fn run() {
             show_legacy_popover,
             update_native_popover,
             update_native_preferences,
+            update_accessibility_guide,
+            show_accessibility_guide,
             show_timer_menu,
             open_system_settings
         ])
@@ -2199,6 +2276,13 @@ pub fn run() {
                 if unsafe { sb_status_item_is_visible() } == 0 {
                     return Err(std::io::Error::other(
                         "macOS created the OneTouch status item but kept it hidden",
+                    )
+                    .into());
+                }
+                let accessibility_result = unsafe { sb_accessibility_guide_create() };
+                if accessibility_result != 0 {
+                    return Err(std::io::Error::other(
+                        "macOS did not create the OneTouch accessibility guide",
                     )
                     .into());
                 }
@@ -2706,6 +2790,36 @@ mod tests {
         assert!(app.contains("localStorage.setItem('switchboard-visible'"));
         assert!(app.contains("localStorage.setItem('switchboard-order'"));
         assert!(app.contains("localStorage.setItem('switchboard-shortcuts'"));
+    }
+
+    #[test]
+    fn accessibility_guide_uses_native_file_drag_and_blocks_untrusted_controls() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("@interface SBAccessibilityGuideController"));
+        assert!(helper.contains("@interface SBAccessibilityDragView"));
+        assert!(helper.contains("initWithPasteboardWriter:self.appURL"));
+        assert!(helper.contains("SBAccessibilityApplicationURL"));
+        assert!(helper.contains("CGWindowListCopyWindowInfo"));
+        assert!(helper.contains("accessibilityDisplayShouldReduceMotion"));
+        assert!(helper.contains("NSGlassEffectViewStyleRegular"));
+        assert!(helper.contains("AXIsProcessTrusted()"));
+        assert!(!helper.contains("AXIsProcessTrustedWithOptions"));
+
+        let source = include_str!("lib.rs");
+        assert!(source.contains("fn require_accessibility_or_show_guide"));
+        assert!(source.contains("sb_accessibility_guide_create()"));
+        assert!(source.contains("update_accessibility_guide"));
+        assert!(source.contains("show_accessibility_guide"));
+        assert!(source.contains("if unsafe { sb_accessibility_is_trusted() } == 0"));
+
+        let app = include_str!("../../src/App.jsx");
+        assert!(app.contains("ACCESSIBILITY_GUIDE_COPY"));
+        assert!(app.contains("updateNativeAccessibilityGuide(accessibilityGuideModel)"));
+        assert!(app.contains("showNativeAccessibilityGuide()"));
+
+        let bridge = include_str!("../../src/nativeBridge.js");
+        assert!(bridge.contains("invoke('update_accessibility_guide'"));
+        assert!(bridge.contains("invoke('show_accessibility_guide'"));
     }
 
     #[test]

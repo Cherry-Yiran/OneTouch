@@ -202,6 +202,17 @@ export async function updateNativePreferences(model) {
   return true;
 }
 
+export async function updateNativeAccessibilityGuide(model) {
+  if (!isTauri()) return false;
+  await invoke('update_accessibility_guide', { model });
+  return true;
+}
+
+export async function showNativeAccessibilityGuide() {
+  if (!isTauri()) return false;
+  return invoke('show_accessibility_guide');
+}
+
 export async function listenForNativePopoverActions(handler) {
   if (!isTauri()) return () => {};
   const { listen } = await import('@tauri-apps/api/event');
