@@ -81,11 +81,14 @@ jobs:
             -nokeys \
             -passin env:APPLE_CERTIFICATE_PASSWORD \
             -out "$certificate_pem"
-          security add-trusted-cert \
+          sudo security add-trusted-cert \
+            -d \
             -r trustRoot \
-            -k "$keychain_path" \
+            -k /Library/Keychains/System.keychain \
             "$certificate_pem"
-          security list-keychains -d user -s "$keychain_path"
+          security list-keychains -d user -s \
+            "$keychain_path" \
+            /Library/Keychains/System.keychain
           security default-keychain -d user -s "$keychain_path"
           security find-identity -v -p codesigning "$keychain_path" \
             | grep -F "$APPLE_SIGNING_IDENTITY"
