@@ -29,13 +29,16 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.match(workflow, /APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}/);
   assert.match(workflow, /APPLE_CERTIFICATE_PASSWORD: \$\{\{ secrets\.APPLE_CERTIFICATE_PASSWORD \}\}/);
   assert.match(workflow, /APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}/);
-  assert.match(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_ID \}\}/);
-  assert.match(workflow, /APPLE_PASSWORD: \$\{\{ secrets\.APPLE_PASSWORD \}\}/);
-  assert.match(workflow, /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
+  assert.doesNotMatch(workflow, /APPLE_ID: \$\{\{ secrets\.APPLE_ID \}\}/);
+  assert.doesNotMatch(workflow, /APPLE_PASSWORD: \$\{\{ secrets\.APPLE_PASSWORD \}\}/);
+  assert.doesNotMatch(workflow, /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
+  assert.match(workflow, /Import stable self-signed macOS identity/);
+  assert.match(workflow, /security add-trusted-cert/);
+  assert.match(workflow, /security find-identity -v -p codesigning/);
   assert.match(workflow, /tauri-apps\/tauri-action@v1/);
   assert.match(workflow, /runs-on: macos-26/);
   assert.notEqual(config.bundle.macOS.signingIdentity, '-');
-  assert.match(workflow, /Require stable Apple code signing/);
+  assert.match(workflow, /Require stable macOS code signing/);
   assert.match(workflow, /Refusing to publish an ad-hoc signed build/);
 });
 

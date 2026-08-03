@@ -112,7 +112,7 @@ src-tauri/target/release/bundle/macos/OneTouch.app
 - 客户端通过 `https://github.com/Cherry-Yiran/OneTouch/releases/latest/download/latest.json` 查询最新正式版本。
 - 推送 `v*` 版本标签会触发 `.github/workflows/release.yml`，自动创建 GitHub Release 并上传 DMG、更新包、签名和 `latest.json`。
 - `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 只保存在 GitHub Actions Secrets。
-- 发布流水线已预留 `APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`、`APPLE_ID`、`APPLE_PASSWORD` 和 `APPLE_TEAM_ID`；配置 Developer ID 后会在同一次构建中完成 Apple 签名与公证。
+- 发布流水线通过 `APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD` 和 `APPLE_SIGNING_IDENTITY` 导入固定的 OneTouch 自签名身份，并由 Tauri 生成发布产物；当前不接入 Apple Developer ID 或公证。
 - `0.3.0` 是首个包含更新器的引导版本；从更早版本升级到 `0.3.0` 仍需手动安装一次，之后即可在应用内更新。
 
 ## 使用说明
@@ -130,7 +130,7 @@ OneTouch 会在首次启动时先引导完成核心功能所需的辅助功能�
 
 ## 分发说明
 
-公开构建必须使用同一 Apple Developer ID 签名并完成公证，同时通过独立的 Tauri 更新密钥验证自动更新包。稳定的 Apple 签名让 macOS 能把新版本识别为同一应用，避免覆盖更新后丢失辅助功能等隐私授权；发布流水线会拒绝生成 ad-hoc 正式版本。Apple 签名和 Tauri 更新签名是两套独立机制。
+公开测试构建使用同一张长期 OneTouch 自签名证书，同时通过独立的 Tauri 更新密钥验证自动更新包。固定的 macOS 代码身份让覆盖更新继续被识别为同一应用，避免再次丢失辅助功能等隐私授权；发布流水线会拒绝生成临时 ad-hoc 版本。因为没有 Apple 公证，新用户首次下载后仍需在 macOS“隐私与安全性”中手动允许打开。
 
 ## 技术栈
 
