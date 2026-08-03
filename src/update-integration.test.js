@@ -33,6 +33,7 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.doesNotMatch(workflow, /APPLE_PASSWORD: \$\{\{ secrets\.APPLE_PASSWORD \}\}/);
   assert.doesNotMatch(workflow, /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
   assert.match(workflow, /Import stable self-signed macOS identity/);
+  assert.match(workflow, /openssl pkcs12 \\\n\s+-legacy/);
   assert.match(workflow, /security add-trusted-cert/);
   assert.match(workflow, /security find-identity -v -p codesigning/);
   assert.match(workflow, /tauri-apps\/tauri-action@v1/);

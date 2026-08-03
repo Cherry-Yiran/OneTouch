@@ -76,6 +76,7 @@ jobs:
             "$keychain_path"
 
           openssl pkcs12 \
+            -legacy \
             -in "$certificate_path" \
             -nokeys \
             -passin env:APPLE_CERTIFICATE_PASSWORD \
