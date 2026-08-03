@@ -47,7 +47,7 @@ unsafe extern "C" {
     fn sb_status_item_create(
         callback: Option<extern "C" fn(x: f64, y: f64, width: f64, height: f64)>,
     ) -> c_int;
-    fn sb_status_item_is_visible() -> c_int;
+    fn sb_status_item_ensure_available() -> c_int;
     fn sb_accessibility_is_trusted() -> c_int;
     fn sb_accessibility_guide_create() -> c_int;
     fn sb_accessibility_guide_update_json(model_json: *const c_char) -> c_int;
@@ -2282,12 +2282,6 @@ pub fn run() {
                     )
                     .into());
                 }
-                if unsafe { sb_status_item_is_visible() } == 0 {
-                    return Err(std::io::Error::other(
-                        "macOS created the OneTouch status item but kept it hidden",
-                    )
-                    .into());
-                }
                 let accessibility_result = unsafe { sb_accessibility_guide_create() };
                 if accessibility_result != 0 {
                     return Err(std::io::Error::other(
@@ -2367,10 +2361,13 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building OneTouch")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
-                let _ = show_popover(app_handle.clone());
+                let result = unsafe { sb_status_item_ensure_available() };
+                if result != 0 {
+                    eprintln!("OneTouch could not restore its menu bar icon ({result})");
+                }
             }
         });
 }
@@ -2523,12 +2520,12 @@ mod tests {
     }
 
     #[test]
-    fn native_status_item_avoids_broken_layout_restore_and_automatic_termination() {
+    fn native_status_item_uses_the_migrated_bundle_identity_and_public_appkit_api() {
         let helper = include_str!("macos_helper.m");
-        assert!(!helper.contains("autosaveName ="));
+        let config = include_str!("../tauri.conf.json");
+        assert!(config.contains("\"identifier\": \"design.ryan.onetouch.menubar\""));
         assert!(!helper.contains("NSStatusItem Visible "));
         assert!(!helper.contains("NSStatusItem VisibleCC "));
-        assert!(!helper.contains("primary-status-item"));
         assert!(helper.contains("statusItemWithLength:24.0"));
         assert!(!helper.contains("SBStatusItem.length ="));
         assert!(helper.contains("initWithString:@\"P\""));
@@ -2538,7 +2535,21 @@ mod tests {
         assert!(!helper.contains(
             "SBStatusIconView.contentTintColor = NSColor.whiteColor"
         ));
+        assert!(!helper.contains(
+            "_initWithStatusBar:length:priority:systemInsertOrder:activeItem:"
+        ));
+        assert!(!helper.contains("SBPrimaryStatusItemAutosaveName"));
+        assert!(!helper.contains("setAutosaveName:"));
+        assert!(!helper.contains("_insertStatusItem:"));
+        assert!(!helper.contains("_wakeStatusItem"));
+        assert!(!helper.contains("SBStatusItemBehaviorNeverClip"));
         assert!(!helper.contains("_setDropPriority:"));
+        assert!(!helper.contains("OneTouchStatusDebug"));
+        assert!(helper.contains("SBEnsureStatusItemAvailable"));
+        assert!(helper.contains("NSContainsRect(screen.frame, frame)"));
+        assert!(helper.contains("150.0 * NSEC_PER_MSEC"));
+        assert!(helper.contains("500.0 * NSEC_PER_MSEC"));
+        assert!(!helper.contains("removeStatusItem"));
         assert!(!helper.contains("SBStatusItem.visible = YES"));
         assert!(helper.contains("disableAutomaticTermination"));
         assert!(helper.contains("disableSuddenTermination"));
@@ -2549,10 +2560,18 @@ mod tests {
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("SBStatusItemHasScreenAnchor"));
         assert!(helper.contains("menuBarFloor"));
-        assert!(helper.contains("result = -2"));
+        assert!(helper.contains("SBEnsureStatusItemAvailable"));
+        assert!(!helper.contains("SBNativePopoverDetached"));
+        assert!(!helper.contains("SBShowDetachedNativePopover"));
 
-        let source = include_str!("lib.rs");
+        let source = include_str!("lib.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(!source.contains("sb_status_item_is_visible"));
         assert!(source.contains("tauri::RunEvent::Reopen"));
+        assert!(source.contains("sb_status_item_ensure_available"));
+        assert!(!source.contains("show_popover(app_handle.clone())"));
         assert!(source.contains("menu bar icon does not have a screen anchor"));
         assert!(source.contains("Never invent a top-right anchor"));
         assert!(source.contains("NATIVE_POPOVER_MODEL_READY.swap(true"));
