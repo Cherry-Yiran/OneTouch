@@ -2533,11 +2533,9 @@ mod tests {
         assert!(!helper.contains("SBStatusItem.length ="));
         assert!(helper.contains("initWithString:@\"P\""));
         assert!(helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
-        assert!(helper.contains("@interface SBPassthroughImageView"));
-        assert!(helper.contains("SBStatusIconView.contentTintColor = nil"));
-        assert!(!helper.contains(
-            "SBStatusIconView.contentTintColor = NSColor.whiteColor"
-        ));
+        assert!(helper.contains("button.image = SBSingleSwitchTemplate(16.0)"));
+        assert!(helper.contains("button.imagePosition = NSImageOnly"));
+        assert!(!helper.contains("SBStatusIconView"));
         assert!(!helper.contains("_setDropPriority:"));
         assert!(!helper.contains("SBStatusItem.visible = YES"));
         assert!(helper.contains("disableAutomaticTermination"));

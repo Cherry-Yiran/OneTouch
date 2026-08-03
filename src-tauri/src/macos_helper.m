@@ -35,7 +35,6 @@ typedef void (*SBNativePreferencesCallback)(const char *action, const char *cont
                                             const char *payload);
 static __strong NSStatusItem *SBStatusItem;
 static __strong NSObject *SBStatusTargetInstance;
-static __strong NSImageView *SBStatusIconView;
 static SBStatusItemCallback SBStatusCallback = NULL;
 static SBNativePopoverCallback SBNativePopoverActionCallback = NULL;
 static SBNativePreferencesCallback SBNativePreferencesActionCallback = NULL;
@@ -72,9 +71,6 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
                                       BOOL enabled, BOOL *actualState, char **error_output);
 
 @interface SBStatusTarget : NSObject
-@end
-
-@interface SBPassthroughImageView : NSImageView
 @end
 
 @interface SBTimerMenuTarget : NSObject
@@ -264,34 +260,17 @@ static void SBUpdateStatusImage(void) {
     // macOS 26 can park a newly created image-only status item in a screen-edge
     // holding window even though NSStatusItem.isVisible remains YES. A real
     // (but visually transparent) text title keeps the item in the menu bar.
-    // Draw the authored template icon in a pass-through overlay so AppKit can
-    // apply the menu bar's current appearance while the whole 24 pt button
-    // remains clickable.
-    button.image = nil;
-    button.imagePosition = NSNoImage;
+    // Keep a real title on the standard status-bar button for macOS 26 layout
+    // stability, but let AppKit render the template through NSButton.image so
+    // it receives the menu bar's current light/dark tint.
+    button.image = SBSingleSwitchTemplate(16.0);
+    button.imagePosition = NSImageOnly;
     button.attributedTitle = [[NSAttributedString alloc]
         initWithString:@"P"
             attributes:@{
                 NSForegroundColorAttributeName: NSColor.clearColor,
                 NSFontAttributeName: [NSFont systemFontOfSize:1.0],
             }];
-    if (SBStatusIconView == nil) {
-        SBStatusIconView = [[SBPassthroughImageView alloc] initWithFrame:NSZeroRect];
-        SBStatusIconView.translatesAutoresizingMaskIntoConstraints = NO;
-        SBStatusIconView.imageScaling = NSImageScaleNone;
-        SBStatusIconView.accessibilityElement = NO;
-        [button addSubview:SBStatusIconView];
-        [NSLayoutConstraint activateConstraints:@[
-            [SBStatusIconView.centerXAnchor constraintEqualToAnchor:button.centerXAnchor],
-            [SBStatusIconView.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
-            [SBStatusIconView.widthAnchor constraintEqualToConstant:18.0],
-            [SBStatusIconView.heightAnchor constraintEqualToConstant:18.0],
-        ]];
-    }
-    SBStatusIconView.image = SBSingleSwitchTemplate(16.0);
-    // Keep the standard AppKit rendering pipeline. A nil content tint lets the
-    // template image follow the menu bar's light/dark and accessibility state.
-    SBStatusIconView.contentTintColor = nil;
     button.accessibilityLabel = @"OneTouch";
 }
 
@@ -320,12 +299,6 @@ static BOOL SBStatusItemHasScreenAnchor(void) {
     NSRect screenFrame = screen.frame;
     double flippedY = screenFrame.origin.y + screenFrame.size.height - (frame.origin.y + frame.size.height);
     SBStatusCallback(frame.origin.x, flippedY, frame.size.width, frame.size.height);
-}
-@end
-
-@implementation SBPassthroughImageView
-- (NSView *)hitTest:(NSPoint)point {
-    return nil;
 }
 @end
 
