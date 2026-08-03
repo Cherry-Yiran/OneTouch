@@ -106,19 +106,27 @@ const COPY = {
 export const ACCESSIBILITY_GUIDE_COPY = Object.freeze({
   en: Object.freeze({
     title: 'Enable Accessibility',
+    explanation: 'Grant access once so OneTouch controls can work without interrupting you later.',
+    privacy: 'Only the controls you choose are executed. Keystrokes are never recorded or uploaded.',
     appName: 'OneTouch',
     dragHint: 'Drag into the list',
     fallback: 'Use + to choose OneTouch.app',
     close: 'Close',
+    quit: 'Quit OneTouch',
     successTitle: 'Accessibility Enabled',
+    successStatus: 'OneTouch is ready.',
   }),
   zh: Object.freeze({
     title: '开启辅助功能权限',
+    explanation: '只需授权一次，之后使用 OneTouch 控制时不会再被打断。',
+    privacy: '仅执行你主动选择的控制，不会记录或上传键盘内容。',
     appName: 'OneTouch',
     dragHint: '拖入辅助功能列表',
     fallback: '请使用 + 选择 OneTouch.app',
     close: '关闭',
+    quit: '退出 OneTouch',
     successTitle: '辅助功能已开启',
+    successStatus: 'OneTouch 已准备就绪。',
   }),
 });
 

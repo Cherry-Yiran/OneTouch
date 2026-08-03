@@ -9,10 +9,24 @@ const helper = await readFile(
   'utf8',
 );
 
+function objectiveCMethod(source, start, next) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(next, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `missing method: ${start}`);
+  assert.notEqual(endIndex, -1, `missing method boundary: ${next}`);
+  return source.slice(startIndex, endIndex);
+}
+
 test('ships bilingual native Accessibility guide copy', () => {
   assert.match(app, /ACCESSIBILITY_GUIDE_COPY/);
   assert.match(app, /Enable Accessibility/);
   assert.match(app, /开启辅助功能权限/);
+  assert.match(app, /Grant access once/);
+  assert.match(app, /只需授权一次/);
+  assert.match(app, /Keystrokes are never recorded or uploaded/);
+  assert.match(app, /不会记录或上传键盘内容/);
+  assert.match(app, /Quit OneTouch/);
+  assert.match(app, /退出 OneTouch/);
   assert.match(app, /autoShow: true/);
   assert.match(app, /updateNativeAccessibilityGuide\(accessibilityGuideModel\)/);
 });
@@ -31,12 +45,12 @@ test('uses the app bundle URL as a native drag payload without prompting AX chec
   assert.doesNotMatch(helper, /AXIsProcessTrustedWithOptions/);
 });
 
-test('keeps the enlarged drag guide focused on one direct action', () => {
+test('keeps the native permission guide compact and explicit', () => {
   assert.match(helper, /SBAccessibilityGuideWidth = 420\.0/);
-  assert.match(helper, /SBAccessibilityGuideHeight = 158\.0/);
+  assert.match(helper, /SBAccessibilityGuideHeight = 242\.0/);
   assert.match(helper, /self\.titleLabel\.topAnchor constraintEqualToAnchor:self\.contentHostView\.topAnchor\s+constant:20\.0/);
-  assert.match(helper, /self\.dragView\.topAnchor constraintEqualToAnchor:self\.titleLabel\.bottomAnchor\s+constant:20\.0/);
-  assert.match(helper, /self\.dragView\.bottomAnchor constraintEqualToAnchor:self\.contentHostView\.bottomAnchor\s+constant:-20\.0/);
+  assert.match(helper, /self\.dragView\.topAnchor constraintEqualToAnchor:self\.explanationLabel\.bottomAnchor\s+constant:14\.0/);
+  assert.match(helper, /self\.dragView\.heightAnchor constraintEqualToConstant:68\.0/);
   assert.match(helper, /systemFontOfSize:16\.0/);
   assert.match(helper, /systemFontOfSize:14\.0/);
   assert.match(helper, /bezierPathWithRoundedRect:borderRect/);
@@ -47,8 +61,27 @@ test('keeps the enlarged drag guide focused on one direct action', () => {
   assert.match(helper, /path\.lineWidth = 1\.0/);
   assert.doesNotMatch(helper, /systemFontOfSize:20\.0/);
   assert.doesNotMatch(helper, /hand\.draw/);
-  assert.doesNotMatch(helper, /reopenButton/);
-  assert.doesNotMatch(helper, /instructionLabel/);
-  assert.doesNotMatch(app, /reopen: '重新打开'/);
-  assert.doesNotMatch(app, /instruction: '将 OneTouch/);
+  assert.match(helper, /buttonWithTitle:self\.model\[@"quit"\]/);
+  assert.match(helper, /NSBezelStyleRounded/);
+});
+
+test('does not reopen System Settings in the background after permission is revoked', () => {
+  const permissionTick = objectiveCMethod(
+    helper,
+    '- (void)permissionTick:',
+    '- (void)trackingTick:',
+  );
+  assert.match(permissionTick, /SBHideNativePopover\(NO\)/);
+  assert.match(permissionTick, /\[self hide\]/);
+  assert.doesNotMatch(permissionTick, /showOpeningSystemSettings:YES/);
+});
+
+test('enters the main menu automatically after Accessibility is granted', () => {
+  const showSuccess = objectiveCMethod(
+    helper,
+    '- (void)showSuccess',
+    '- (void)hide',
+  );
+  assert.match(showSuccess, /successStatusLabel/);
+  assert.match(showSuccess, /SBShowNativePopover\(NO\)/);
 });

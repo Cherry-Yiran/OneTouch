@@ -117,9 +117,13 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @property(nonatomic, strong) SBAccessibilityGuidePanel *panel;
 @property(nonatomic, strong) NSView *contentHostView;
 @property(nonatomic, strong) NSTextField *titleLabel;
+@property(nonatomic, strong) NSTextField *explanationLabel;
+@property(nonatomic, strong) NSTextField *privacyLabel;
 @property(nonatomic, strong) SBAccessibilityDragView *dragView;
 @property(nonatomic, strong) NSButton *closeButton;
+@property(nonatomic, strong) NSButton *quitButton;
 @property(nonatomic, strong) NSImageView *successIcon;
+@property(nonatomic, strong) NSTextField *successStatusLabel;
 @property(nonatomic, strong) NSDictionary *model;
 @property(nonatomic, strong) NSTimer *trackingTimer;
 @property(nonatomic, strong) NSTimer *permissionTimer;
@@ -176,6 +180,7 @@ static void SBActivateForNativePopover(void) {
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+static void SBShowNativePopover(BOOL persistent);
 static void SBHideNativePopover(BOOL restorePreviousApplication);
 
 static void SBRestorePreviousApplicationAfterPopover(void) {
@@ -608,18 +613,22 @@ static NSRect SBAccessibilitySystemSettingsFrame(void) {
 
 @implementation SBAccessibilityGuideController
 static const CGFloat SBAccessibilityGuideWidth = 420.0;
-static const CGFloat SBAccessibilityGuideHeight = 158.0;
+static const CGFloat SBAccessibilityGuideHeight = 242.0;
 
 - (instancetype)init {
     self = [super init];
     if (self == nil) return nil;
     self.model = @{
         @"title": @"开启辅助功能权限",
+        @"explanation": @"只需授权一次，之后使用 OneTouch 控制时不会再被打断。",
+        @"privacy": @"仅执行你主动选择的控制，不会记录或上传键盘内容。",
         @"appName": @"OneTouch",
         @"dragHint": @"拖入辅助功能列表",
         @"fallback": @"请使用 + 选择 OneTouch.app",
         @"close": @"关闭",
+        @"quit": @"退出 OneTouch",
         @"successTitle": @"辅助功能已开启",
+        @"successStatus": @"OneTouch 已准备就绪。",
     };
     [self buildPanel];
     self.lastKnownTrusted = AXIsProcessTrusted();
@@ -700,6 +709,14 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
     self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentHostView addSubview:self.titleLabel];
 
+    self.explanationLabel = SBLabel(self.model[@"explanation"],
+        [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.explanationLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.explanationLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.explanationLabel.maximumNumberOfLines = 2;
+    [self.contentHostView addSubview:self.explanationLabel];
+
     self.dragView = [[SBAccessibilityDragView alloc]
         initWithAppURL:SBAccessibilityApplicationURL()];
     __weak SBAccessibilityGuideController *weakSelf = self;
@@ -724,6 +741,30 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
     self.successIcon.accessibilityLabel = self.model[@"successTitle"];
     [self.contentHostView addSubview:self.successIcon];
 
+    self.successStatusLabel = SBLabel(self.model[@"successStatus"],
+        [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.successStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.successStatusLabel.alignment = NSTextAlignmentCenter;
+    self.successStatusLabel.hidden = YES;
+    [self.contentHostView addSubview:self.successStatusLabel];
+
+    self.privacyLabel = SBLabel(self.model[@"privacy"],
+        [NSFont systemFontOfSize:11.0 weight:NSFontWeightRegular],
+        NSColor.secondaryLabelColor);
+    self.privacyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.privacyLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.privacyLabel.maximumNumberOfLines = 2;
+    [self.contentHostView addSubview:self.privacyLabel];
+
+    self.quitButton = [NSButton buttonWithTitle:self.model[@"quit"] ?: @""
+                                          target:self
+                                          action:@selector(quitPressed:)];
+    self.quitButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.quitButton.bezelStyle = NSBezelStyleRounded;
+    self.quitButton.controlSize = NSControlSizeSmall;
+    [self.contentHostView addSubview:self.quitButton];
+
     [NSLayoutConstraint activateConstraints:@[
         [self.closeButton.topAnchor constraintEqualToAnchor:self.contentHostView.topAnchor constant:9.0],
         [self.closeButton.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
@@ -736,20 +777,42 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
                                                    constant:20.0],
         [self.titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.closeButton.leadingAnchor
                                                                  constant:-8.0],
+        [self.explanationLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
+        [self.explanationLabel.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                               constant:-20.0],
+        [self.explanationLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor
+                                                          constant:8.0],
         [self.dragView.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
                                                      constant:20.0],
         [self.dragView.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
                                                       constant:-20.0],
-        [self.dragView.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor
-                                                  constant:20.0],
-        [self.dragView.bottomAnchor constraintEqualToAnchor:self.contentHostView.bottomAnchor
-                                                     constant:-20.0],
-        [self.successIcon.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
-                                                        constant:24.0],
-        [self.successIcon.bottomAnchor constraintEqualToAnchor:self.contentHostView.bottomAnchor
-                                                        constant:-34.0],
+        [self.dragView.topAnchor constraintEqualToAnchor:self.explanationLabel.bottomAnchor
+                                                  constant:14.0],
+        [self.dragView.heightAnchor constraintEqualToConstant:68.0],
+        [self.privacyLabel.leadingAnchor constraintEqualToAnchor:self.contentHostView.leadingAnchor
+                                                         constant:20.0],
+        [self.privacyLabel.topAnchor constraintEqualToAnchor:self.dragView.bottomAnchor
+                                                     constant:12.0],
+        [self.privacyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.quitButton.leadingAnchor
+                                                                    constant:-12.0],
+        [self.privacyLabel.bottomAnchor constraintLessThanOrEqualToAnchor:self.contentHostView.bottomAnchor
+                                                                  constant:-16.0],
+        [self.quitButton.trailingAnchor constraintEqualToAnchor:self.contentHostView.trailingAnchor
+                                                        constant:-20.0],
+        [self.quitButton.bottomAnchor constraintEqualToAnchor:self.contentHostView.bottomAnchor
+                                                      constant:-16.0],
+        [self.successIcon.centerXAnchor constraintEqualToAnchor:self.contentHostView.centerXAnchor],
+        [self.successIcon.centerYAnchor constraintEqualToAnchor:self.contentHostView.centerYAnchor
+                                                       constant:-8.0],
         [self.successIcon.widthAnchor constraintEqualToConstant:48.0],
         [self.successIcon.heightAnchor constraintEqualToConstant:48.0],
+        [self.successStatusLabel.topAnchor constraintEqualToAnchor:self.successIcon.bottomAnchor
+                                                           constant:10.0],
+        [self.successStatusLabel.centerXAnchor constraintEqualToAnchor:self.contentHostView.centerXAnchor],
+        [self.successStatusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.contentHostView.leadingAnchor
+                                                                            constant:20.0],
+        [self.successStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.contentHostView.trailingAnchor
+                                                                           constant:-20.0],
     ]];
     [self applyCurrentModel];
 }
@@ -757,13 +820,21 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
 - (void)applyCurrentModel {
     if (self.showingSuccess) return;
     self.titleLabel.stringValue = self.model[@"title"] ?: @"";
+    self.explanationLabel.stringValue = self.model[@"explanation"] ?: @"";
+    self.privacyLabel.stringValue = self.model[@"privacy"] ?: @"";
     self.closeButton.toolTip = self.model[@"close"] ?: @"";
     self.closeButton.accessibilityLabel = self.closeButton.toolTip;
+    self.quitButton.title = self.model[@"quit"] ?: @"";
+    self.quitButton.accessibilityLabel = self.quitButton.title;
     [self.dragView updateName:self.model[@"appName"]
                          hint:self.model[@"dragHint"]
                      fallback:self.model[@"fallback"]];
     self.dragView.hidden = NO;
+    self.explanationLabel.hidden = NO;
+    self.privacyLabel.hidden = NO;
+    self.quitButton.hidden = NO;
     self.successIcon.hidden = YES;
+    self.successStatusLabel.hidden = YES;
 }
 
 - (void)updateModel:(NSDictionary *)model {
@@ -816,7 +887,8 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
             [self showSuccess];
         }
     } else if (self.lastKnownTrusted) {
-        [self showOpeningSystemSettings:YES];
+        SBHideNativePopover(NO);
+        [self hide];
     }
     self.lastKnownTrusted = trusted;
 }
@@ -887,9 +959,14 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
     [self.trackingTimer invalidate];
     self.trackingTimer = nil;
     self.titleLabel.stringValue = self.model[@"successTitle"] ?: @"";
+    self.explanationLabel.hidden = YES;
     self.dragView.hidden = YES;
+    self.privacyLabel.hidden = YES;
+    self.quitButton.hidden = YES;
     self.successIcon.accessibilityLabel = self.titleLabel.stringValue;
     self.successIcon.hidden = NO;
+    self.successStatusLabel.stringValue = self.model[@"successStatus"] ?: @"";
+    self.successStatusLabel.hidden = NO;
     if (!NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
         self.successIcon.alphaValue = 0.0;
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
@@ -899,7 +976,9 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        if (self.showingSuccess) [self hide];
+        if (!self.showingSuccess) return;
+        [self hide];
+        SBShowNativePopover(NO);
     });
 }
 
@@ -916,6 +995,11 @@ static const CGFloat SBAccessibilityGuideHeight = 158.0;
 - (void)closePressed:(id)sender {
     (void)sender;
     [self hide];
+}
+
+- (void)quitPressed:(id)sender {
+    (void)sender;
+    [NSApp terminate:nil];
 }
 
 @end
