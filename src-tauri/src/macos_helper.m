@@ -3147,6 +3147,44 @@ static void SBCopyError(char **output, NSString *message) {
     *output = strdup(message.UTF8String ?: "Unknown macOS error");
 }
 
+int sb_quit_nonessential_apps(int *requested_count, char **error_output) {
+    __block NSInteger eligibleCount = 0;
+    __block NSInteger requestedCount = 0;
+    SBRunOnMainSync(^{
+        NSWorkspace *workspace = NSWorkspace.sharedWorkspace;
+        NSString *currentBundleID = NSBundle.mainBundle.bundleIdentifier ?: @"";
+        pid_t currentProcessID = NSProcessInfo.processInfo.processIdentifier;
+        pid_t previousFrontmostProcessID =
+            (SBPreviousFrontmostApplication != nil && !SBPreviousFrontmostApplication.terminated)
+                ? SBPreviousFrontmostApplication.processIdentifier : -1;
+        NSSet<NSString *> *protectedBundleIDs = [NSSet setWithObjects:
+            @"com.apple.finder", currentBundleID, nil];
+
+        for (NSRunningApplication *application in workspace.runningApplications) {
+            if (application.terminated ||
+                application.activationPolicy != NSApplicationActivationPolicyRegular ||
+                application.processIdentifier == currentProcessID ||
+                application.processIdentifier == previousFrontmostProcessID) {
+                continue;
+            }
+            NSString *bundleID = application.bundleIdentifier ?: @"";
+            if ([protectedBundleIDs containsObject:bundleID]) continue;
+
+            eligibleCount += 1;
+            // Use the normal AppKit quit request so applications can ask the
+            // user to save work. OneTouch must never force-terminate them.
+            if ([application terminate]) requestedCount += 1;
+        }
+    });
+
+    if (requested_count != NULL) *requested_count = (int)requestedCount;
+    if (eligibleCount > 0 && requestedCount == 0) {
+        SBCopyError(error_output, @"macOS could not quit the open applications");
+        return -1;
+    }
+    return 0;
+}
+
 static void SBResetFeatureStatus(SBFeatureStatus *status) {
     if (status != NULL) memset(status, 0, sizeof(*status));
 }

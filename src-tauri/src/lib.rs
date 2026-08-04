@@ -1,7 +1,8 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    env,
     ffi::{CStr, CString},
-    env, fs,
+    fs,
     io::Read,
     os::raw::{c_char, c_int, c_void},
     path::Path,
@@ -16,11 +17,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{
-    tray::{MouseButton, MouseButtonState, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect,
-    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
-};
 #[cfg(not(target_os = "macos"))]
 use tauri::{
     image::Image,
@@ -28,13 +24,42 @@ use tauri::{
     window::{Effect, EffectState, EffectsBuilder},
     TitleBarStyle,
 };
+use tauri::{
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
 
-const ALL_CONTROL_IDS: [&str; 28] = [
-    "desktop", "darkMode", "awake", "airpods", "dnd", "nightShift", "screenSaver",
-    "trueTone", "frontApp", "muteMic", "xcodeClean", "emptyTrash", "ejectDisk",
-    "clipboard", "hideWindow", "hideDock", "lowPower", "highPower", "music",
-    "spotify", "hiddenFiles", "displaySleep", "resolution", "hideWidgets",
-    "stageManager", "cleanScreen", "lockKeyboard", "lockScreen",
+const ALL_CONTROL_IDS: [&str; 29] = [
+    "desktop",
+    "darkMode",
+    "awake",
+    "airpods",
+    "dnd",
+    "nightShift",
+    "screenSaver",
+    "trueTone",
+    "frontApp",
+    "muteMic",
+    "xcodeClean",
+    "emptyTrash",
+    "ejectDisk",
+    "clipboard",
+    "hideWindow",
+    "hideDock",
+    "lowPower",
+    "highPower",
+    "music",
+    "spotify",
+    "hiddenFiles",
+    "displaySleep",
+    "resolution",
+    "hideWidgets",
+    "stageManager",
+    "cleanScreen",
+    "lockKeyboard",
+    "lockScreen",
+    "quitApps",
 ];
 // Keep native preferences in their legacy domain. WebView-backed settings are
 // migrated separately before the first window is created under the clean ID.
@@ -146,11 +171,7 @@ unsafe extern "C" {
     fn sb_native_restore_previous_application();
     fn sb_native_preferences_create(
         callback: Option<
-            extern "C" fn(
-                action: *const c_char,
-                control_id: *const c_char,
-                payload: *const c_char,
-            ),
+            extern "C" fn(action: *const c_char, control_id: *const c_char, payload: *const c_char),
         >,
     ) -> c_int;
     fn sb_native_preferences_update_json(model_json: *const c_char) -> c_int;
@@ -162,11 +183,7 @@ unsafe extern "C" {
         use_chinese: c_int,
     ) -> c_int;
     fn sb_display_configuration_json() -> *mut c_char;
-    fn sb_display_set_mode(
-        display_id: u32,
-        mode_id: i32,
-        error_output: *mut *mut c_char,
-    ) -> c_int;
+    fn sb_display_set_mode(display_id: u32, mode_id: i32, error_output: *mut *mut c_char) -> c_int;
     fn sb_audio_device_snapshot_json() -> *mut c_char;
     fn sb_audio_device_set_connected(enabled: c_int, error_output: *mut *mut c_char) -> c_int;
     fn sb_free_string(value: *mut c_char);
@@ -176,6 +193,10 @@ unsafe extern "C" {
     fn sb_keyboard_lock_start(error_output: *mut *mut c_char) -> c_int;
     fn sb_keyboard_lock_stop();
     fn sb_keyboard_lock_active() -> c_int;
+    fn sb_quit_nonessential_apps(
+        requested_count: *mut c_int,
+        error_output: *mut *mut c_char,
+    ) -> c_int;
     fn sb_night_shift_get(
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
@@ -185,37 +206,26 @@ unsafe extern "C" {
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
     ) -> c_int;
-    fn sb_true_tone_get(
-        status: *mut NativeFeatureStatus,
-        error_output: *mut *mut c_char,
-    ) -> c_int;
+    fn sb_true_tone_get(status: *mut NativeFeatureStatus, error_output: *mut *mut c_char) -> c_int;
     fn sb_true_tone_set(
         enabled: c_int,
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
     ) -> c_int;
-    fn sb_low_power_get(
-        status: *mut NativeFeatureStatus,
-        error_output: *mut *mut c_char,
-    ) -> c_int;
+    fn sb_low_power_get(status: *mut NativeFeatureStatus, error_output: *mut *mut c_char) -> c_int;
     fn sb_low_power_set(
         enabled: c_int,
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
     ) -> c_int;
-    fn sb_high_power_get(
-        status: *mut NativeFeatureStatus,
-        error_output: *mut *mut c_char,
-    ) -> c_int;
+    fn sb_high_power_get(status: *mut NativeFeatureStatus, error_output: *mut *mut c_char)
+        -> c_int;
     fn sb_high_power_set(
         enabled: c_int,
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
     ) -> c_int;
-    fn sb_focus_get(
-        status: *mut NativeFeatureStatus,
-        error_output: *mut *mut c_char,
-    ) -> c_int;
+    fn sb_focus_get(status: *mut NativeFeatureStatus, error_output: *mut *mut c_char) -> c_int;
     fn sb_focus_set(
         enabled: c_int,
         status: *mut NativeFeatureStatus,
@@ -446,11 +456,7 @@ fn run_process(program: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
-fn run_process_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Result<(), String> {
+fn run_process_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<(), String> {
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::null())
@@ -614,11 +620,7 @@ fn read_process(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn read_process_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Option<String> {
+fn read_process_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<String> {
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -655,32 +657,30 @@ fn read_process_with_timeout(
 
 fn control_mode(id: &str) -> &'static str {
     match id {
-        "screenSaver" | "frontApp" | "xcodeClean" | "emptyTrash" | "ejectDisk"
-        | "clipboard" | "hideWindow" | "displaySleep" | "lockScreen" => {
-            "action"
-        }
+        "screenSaver" | "frontApp" | "xcodeClean" | "emptyTrash" | "ejectDisk" | "clipboard"
+        | "hideWindow" | "displaySleep" | "lockScreen" | "quitApps" => "action",
         "resolution" => "choice",
         _ => "toggle",
     }
 }
 
 fn is_direct_system_toggle(id: &str) -> bool {
-    matches!(id, "dnd" | "nightShift" | "trueTone" | "lowPower" | "highPower")
+    matches!(
+        id,
+        "dnd" | "nightShift" | "trueTone" | "lowPower" | "highPower"
+    )
 }
 
 fn high_power_supported() -> bool {
-    read_process("/usr/bin/pmset", &["-g", "custom"])
-        .is_some_and(|output| output.lines().any(|line| {
-            line.split_whitespace().next() == Some("highpowermode")
-        }))
+    read_process("/usr/bin/pmset", &["-g", "custom"]).is_some_and(|output| {
+        output
+            .lines()
+            .any(|line| line.split_whitespace().next() == Some("highpowermode"))
+    })
 }
 
 fn parse_percentage(value: Option<&Value>) -> Option<u8> {
-    value?
-        .as_str()?
-        .trim_end_matches('%')
-        .parse::<u8>()
-        .ok()
+    value?.as_str()?.trim_end_matches('%').parse::<u8>().ok()
 }
 
 fn normalized_device_name(value: &str) -> String {
@@ -703,7 +703,8 @@ fn find_audio_device_battery(
                 if !preferred.is_empty()
                     && (normalized == preferred
                         || normalized.contains(&preferred)
-                        || preferred.contains(&normalized)) {
+                        || preferred.contains(&normalized))
+                {
                     let details = details.as_object()?;
                     return Some((
                         name.clone(),
@@ -790,9 +791,7 @@ fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
 }
 
 #[cfg(target_os = "macos")]
-fn native_helper_result(
-    operation: impl FnOnce(*mut *mut c_char) -> c_int,
-) -> Result<(), String> {
+fn native_helper_result(operation: impl FnOnce(*mut *mut c_char) -> c_int) -> Result<(), String> {
     let mut error_pointer: *mut c_char = std::ptr::null_mut();
     let status = operation(&mut error_pointer);
     if status == 0 {
@@ -804,6 +803,20 @@ fn native_helper_result(
         Err(take_native_string(error_pointer)
             .unwrap_or_else(|| format!("macOS returned error {status}")))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn quit_nonessential_apps() -> Result<usize, String> {
+    let mut requested_count = 0;
+    native_helper_result(|error| unsafe {
+        sb_quit_nonessential_apps(&mut requested_count, error)
+    })?;
+    Ok(requested_count.max(0) as usize)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quit_nonessential_apps() -> Result<usize, String> {
+    Err("Quitting other applications is only available on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -908,8 +921,7 @@ fn set_direct_system_toggle(id: &str, enabled: bool) -> Result<NativeFeatureStat
         Err(error)
             if id == "lowPower"
                 || id == "highPower"
-                || (id == "dnd"
-                    && !error.to_ascii_lowercase().contains("permission")) =>
+                || (id == "dnd" && !error.to_ascii_lowercase().contains("permission")) =>
         {
             run_control_center_toggle(id, enabled)?;
             thread::sleep(Duration::from_millis(250));
@@ -1230,7 +1242,8 @@ fn set_spotify_playing(enabled: bool, state: &NativeState) -> Result<(), String>
 }
 
 fn clean_xcode_derived_data() -> Result<(), String> {
-    let home = env::var_os("HOME").ok_or_else(|| "The home directory is unavailable".to_string())?;
+    let home =
+        env::var_os("HOME").ok_or_else(|| "The home directory is unavailable".to_string())?;
     let derived_data = Path::new(&home)
         .join("Library")
         .join("Developer")
@@ -1268,8 +1281,7 @@ tell application "Finder"
 end tell
 "#;
 
-const EMPTY_TRASH_COUNT_SCRIPT: &str =
-    "tell application \"Finder\" to count items of trash";
+const EMPTY_TRASH_COUNT_SCRIPT: &str = "tell application \"Finder\" to count items of trash";
 
 fn empty_trash() -> Result<bool, String> {
     let already_empty = read_process_with_timeout(
@@ -1306,10 +1318,7 @@ fn ejectable_disk_candidates_from_infos(
         let Some(mount_point) = info.mount_point.filter(|value| !value.is_empty()) else {
             continue;
         };
-        if info.internal
-            || !info.ejectable
-            || !Path::new(&mount_point).starts_with("/Volumes")
-        {
+        if info.internal || !info.ejectable || !Path::new(&mount_point).starts_with("/Volumes") {
             continue;
         }
 
@@ -1381,10 +1390,7 @@ fn external_disk_control_status(
 ) -> (bool, Option<String>) {
     match disks {
         Ok(disks) if !disks.is_empty() => (true, None),
-        Ok(_) => (
-            false,
-            Some("No ejectable volumes are mounted".to_string()),
-        ),
+        Ok(_) => (false, Some("No ejectable volumes are mounted".to_string())),
         Err(error) => (false, Some(error.clone())),
     }
 }
@@ -1419,12 +1425,10 @@ fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
     let exclusions = saved_eject_exclusions();
     Ok(ejectable_disk_list()?
         .into_iter()
-        .map(|disk| {
-            ExternalDisk {
-                excluded: exclusions.contains(&disk.name),
-                id: disk.id,
-                name: disk.name,
-            }
+        .map(|disk| ExternalDisk {
+            excluded: exclusions.contains(&disk.name),
+            id: disk.id,
+            name: disk.name,
         })
         .collect())
 }
@@ -1476,16 +1480,14 @@ fn set_switch_blocking(
         });
     }
 
-    let _airpods_guard = if id == "airpods" {
-        Some(
-            state
-                .airpods_operation
-                .try_lock()
-                .map_err(|_| "A Bluetooth audio device operation is already in progress".to_string())?,
-        )
-    } else {
-        None
-    };
+    let _airpods_guard =
+        if id == "airpods" {
+            Some(state.airpods_operation.try_lock().map_err(|_| {
+                "A Bluetooth audio device operation is already in progress".to_string()
+            })?)
+        } else {
+            None
+        };
 
     let mut result_message = None;
     let operation = match id.as_str() {
@@ -1528,6 +1530,10 @@ fn set_switch_blocking(
             "tell application \"System Events\" to keystroke \"q\" using {control down, command down}",
         ),
         "lockScreen" => Ok(()),
+        "quitApps" if enabled => quit_nonessential_apps().map(|requested_count| {
+            result_message = Some(format!("quit-apps-requested:{requested_count}"));
+        }),
+        "quitApps" => Ok(()),
         _ => Err(format!("{id} is not connected to macOS yet")),
     };
 
@@ -1548,11 +1554,7 @@ fn set_switch_blocking(
 }
 
 #[tauri::command]
-async fn set_switch(
-    id: String,
-    enabled: bool,
-    app: AppHandle,
-) -> Result<SwitchResult, String> {
+async fn set_switch(id: String, enabled: bool, app: AppHandle) -> Result<SwitchResult, String> {
     #[cfg(target_os = "macos")]
     require_accessibility_or_show_guide()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1584,22 +1586,15 @@ fn native_state_values(
     .is_none_or(|value| value != "0" && !value.eq_ignore_ascii_case("false"));
     values.insert("desktop".into(), !desktop_visible);
 
-    let dark_mode = read_process(
-        "/usr/bin/defaults",
-        &["read", "-g", "AppleInterfaceStyle"],
-    )
-    .is_some_and(|value| value.eq_ignore_ascii_case("dark"));
+    let dark_mode = read_process("/usr/bin/defaults", &["read", "-g", "AppleInterfaceStyle"])
+        .is_some_and(|value| value.eq_ignore_ascii_case("dark"));
     values.insert("darkMode".into(), dark_mode);
 
-    let dock_hidden = read_process(
-        "/usr/bin/defaults",
-        &["read", "com.apple.dock", "autohide"],
-    )
-    .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    let dock_hidden = read_process("/usr/bin/defaults", &["read", "com.apple.dock", "autohide"])
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
     values.insert("hideDock".into(), dock_hidden);
 
-    let standard_widgets_hidden =
-        read_window_manager_bool("StandardHideWidgets").unwrap_or(false);
+    let standard_widgets_hidden = read_window_manager_bool("StandardHideWidgets").unwrap_or(false);
     let staged_widgets_hidden =
         read_window_manager_bool("StageManagerHideWidgets").unwrap_or(false);
     values.insert(
@@ -1607,8 +1602,7 @@ fn native_state_values(
         standard_widgets_hidden && staged_widgets_hidden,
     );
 
-    let stage_manager =
-        read_window_manager_bool("GloballyEnabled").unwrap_or(false);
+    let stage_manager = read_window_manager_bool("GloballyEnabled").unwrap_or(false);
     values.insert("stageManager".into(), stage_manager);
 
     let current_input_volume = input_volume();
@@ -1635,11 +1629,7 @@ fn native_state_values(
     // Querying Music through AppleScript can block app startup while macOS waits
     // for Automation permission. Treat the state as unknown until the user has
     // explicitly operated this switch during the current app session.
-    let music_state = state
-        .music_playing
-        .lock()
-        .ok()
-        .and_then(|playing| *playing);
+    let music_state = state.music_playing.lock().ok().and_then(|playing| *playing);
     values.insert("music".into(), music_state.unwrap_or(false));
     let spotify_state = state
         .spotify_playing
@@ -1740,18 +1730,16 @@ fn snapshot_state_known(id: &str, music_state_known: bool, spotify_state_known: 
 
 fn system_settings_url(pane: &str) -> Option<&'static str> {
     match pane {
-        "accessibility" => Some(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        ),
-        "automation" => Some(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
-        ),
-        "bluetooth" => Some(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth",
-        ),
-        "focus" => Some(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Focus",
-        ),
+        "accessibility" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        }
+        "automation" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+        }
+        "bluetooth" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
+        }
+        "focus" => Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Focus"),
         _ => None,
     }
 }
@@ -1781,10 +1769,7 @@ async fn get_display_configuration() -> Result<DisplayConfiguration, String> {
 }
 
 #[tauri::command]
-async fn set_display_mode(
-    display_id: u32,
-    mode_id: i32,
-) -> Result<DisplayConfiguration, String> {
+async fn set_display_mode(display_id: u32, mode_id: i32) -> Result<DisplayConfiguration, String> {
     tauri::async_runtime::spawn_blocking(move || {
         set_native_display_mode(display_id, mode_id)?;
         native_display_configuration()
@@ -1902,27 +1887,23 @@ fn update_native_popover(model: Value) -> Result<(), String> {
                 "macOS could not update the native OneTouch popover ({result})"
             ));
         }
-        let native_model_was_ready =
-            NATIVE_POPOVER_MODEL_READY.swap(true, Ordering::AcqRel);
+        let native_model_was_ready = NATIVE_POPOVER_MODEL_READY.swap(true, Ordering::AcqRel);
         if let Some(app) = APP_HANDLE.get() {
             if let Some(window) = app.get_webview_window("popover") {
                 if !native_model_was_ready && window.is_visible().unwrap_or(false) {
                     let _ = window.hide();
-                    let native_result =
-                        if env::var_os("ONETOUCH_SHOW_NATIVE_POPOVER").is_some() {
-                            unsafe { sb_native_popover_show_persistent() }
-                        } else {
-                            unsafe { sb_native_popover_show() }
-                        };
+                    let native_result = if env::var_os("ONETOUCH_SHOW_NATIVE_POPOVER").is_some() {
+                        unsafe { sb_native_popover_show_persistent() }
+                    } else {
+                        unsafe { sb_native_popover_show() }
+                    };
                     if native_result == 0 {
-                        if let Ok(mut active) =
-                            app.state::<NativeState>().native_menu_active.lock()
+                        if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock()
                         {
                             *active = false;
                         }
                     } else {
-                        if let Ok(mut active) =
-                            app.state::<NativeState>().native_menu_active.lock()
+                        if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock()
                         {
                             *active = false;
                         }
@@ -2003,11 +1984,7 @@ fn require_accessibility_or_show_guide() -> Result<(), String> {
     Err("Accessibility permission is required to use OneTouch".to_string())
 }
 
-fn position_popover(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    anchor_rect: Option<tauri::Rect>,
-) {
+fn position_popover(app: &AppHandle, window: &WebviewWindow, anchor_rect: Option<tauri::Rect>) {
     let Ok(window_size) = window.outer_size() else {
         return;
     };
@@ -2111,14 +2088,14 @@ fn show_popover(app: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-    let window = app
-        .get_webview_window("popover")
-        .ok_or_else(|| "The popover window is unavailable".to_string())?;
-    position_popover(&app, &window, None);
-    if !show_popover_with_native_animation(&window) {
-        window.show().map_err(|error| error.to_string())?;
-    }
-    window.set_focus().map_err(|error| error.to_string())
+        let window = app
+            .get_webview_window("popover")
+            .ok_or_else(|| "The popover window is unavailable".to_string())?;
+        position_popover(&app, &window, None);
+        if !show_popover_with_native_animation(&window) {
+            window.show().map_err(|error| error.to_string())?;
+        }
+        window.set_focus().map_err(|error| error.to_string())
     }
 }
 
@@ -2608,10 +2585,7 @@ mod tests {
     fn disables_eject_when_no_ejectable_volume_is_mounted() {
         assert_eq!(
             external_disk_control_status(&Ok(Vec::new())),
-            (
-                false,
-                Some("No ejectable volumes are mounted".to_string())
-            )
+            (false, Some("No ejectable volumes are mounted".to_string()))
         );
         assert_eq!(
             external_disk_control_status(&Ok(vec![EjectableDiskCandidate {
@@ -2625,12 +2599,10 @@ mod tests {
     #[test]
     fn empty_trash_action_is_idempotent_and_race_safe() {
         assert!(super::EMPTY_TRASH_COUNT_SCRIPT.contains("count items of trash"));
-        assert!(super::EMPTY_TRASH_SCRIPT.contains(
-            "if (count of items of trash) is 0 then return"
-        ));
-        assert!(super::EMPTY_TRASH_SCRIPT.contains(
-            "if (count of items of trash) is not 0 then error"
-        ));
+        assert!(super::EMPTY_TRASH_SCRIPT.contains("if (count of items of trash) is 0 then return"));
+        assert!(
+            super::EMPTY_TRASH_SCRIPT.contains("if (count of items of trash) is not 0 then error")
+        );
         assert_eq!(
             super::empty_trash_result_message(true).as_deref(),
             Some("trash-already-empty")
@@ -2672,12 +2644,10 @@ mod tests {
         assert!(helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
         assert!(helper.contains("@interface SBPassthroughImageView"));
         assert!(helper.contains("SBStatusIconView.contentTintColor = nil"));
-        assert!(!helper.contains(
-            "SBStatusIconView.contentTintColor = NSColor.whiteColor"
-        ));
-        assert!(!helper.contains(
-            "_initWithStatusBar:length:priority:systemInsertOrder:activeItem:"
-        ));
+        assert!(!helper.contains("SBStatusIconView.contentTintColor = NSColor.whiteColor"));
+        assert!(
+            !helper.contains("_initWithStatusBar:length:priority:systemInsertOrder:activeItem:")
+        );
         assert!(!helper.contains("SBPrimaryStatusItemAutosaveName"));
         assert!(!helper.contains("setAutosaveName:"));
         assert!(!helper.contains("_insertStatusItem:"));
@@ -2706,10 +2676,7 @@ mod tests {
         assert!(!helper.contains("SBNativePopoverDetached"));
         assert!(!helper.contains("SBShowDetachedNativePopover"));
 
-        let source = include_str!("lib.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap();
+        let source = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
         assert!(!source.contains("sb_status_item_is_visible"));
         assert!(source.contains("tauri::RunEvent::Reopen"));
         assert!(source.contains("sb_status_item_ensure_available"));
@@ -2759,24 +2726,18 @@ mod tests {
         assert!(helper.contains("visibleRows * SBNativeRowHeight"));
         assert!(helper.contains("NSScrollView *scroll = [NSScrollView new]"));
         assert!(helper.contains("rows.count > SBNativeVisibleRowCapacity"));
-        assert!(helper.contains(
-            "initWithFrame:NSMakeRect(0.0, 0.0, SBNativePopoverWidth"
-        ));
+        assert!(helper.contains("initWithFrame:NSMakeRect(0.0, 0.0, SBNativePopoverWidth"));
         assert!(!helper.contains("document.autoresizingMask"));
         assert!(helper.contains("NSGlassEffectView *glass"));
         assert!(!helper.contains("NSAppearanceNameDarkAqua"));
         assert!(!helper.contains("[NSColor colorWithWhite:0.02 alpha:0.30]"));
         assert!(!helper.contains("surfaceColor"));
-        assert!(helper.contains(
-            "[kind isEqualToString:@\"toggle\"] || [kind isEqualToString:@\"action\"]"
-        ));
-        assert!(!helper.contains(
-            "if (pending && ![kind isEqualToString:@\"action\"])"
-        ));
+        assert!(helper
+            .contains("[kind isEqualToString:@\"toggle\"] || [kind isEqualToString:@\"action\"]"));
+        assert!(!helper.contains("if (pending && ![kind isEqualToString:@\"action\"])"));
         assert!(!helper.contains("if (self.momentary &&"));
-        assert!(helper.contains(
-            "toggle.state = active ? NSControlStateValueOn : NSControlStateValueOff"
-        ));
+        assert!(helper
+            .contains("toggle.state = active ? NSControlStateValueOn : NSControlStateValueOff"));
         assert!(helper.contains("[(NSSwitch *)toggle.animator setState:desiredState]"));
         assert!(helper.contains("BOOL canUpdateInPlace"));
         assert!(helper.contains("[self updateRow:row"));
@@ -2788,15 +2749,11 @@ mod tests {
         assert!(!helper.contains(
             "affordance.centerXAnchor constraintEqualToAnchor:controlColumn.centerXAnchor"
         ));
-        assert!(helper.contains(
-            "SBEmitNativePopoverAction(@\"state\", @\"cleanScreen\", 0)"
-        ));
+        assert!(helper.contains("SBEmitNativePopoverAction(@\"state\", @\"cleanScreen\", 0)"));
         assert!(helper.contains("SBHideNativePopover"));
         assert!(helper.contains("SBRestorePreviousApplicationAfterPopover"));
         assert!(helper.contains("rowStack.alignment = NSLayoutAttributeLeading"));
-        assert!(helper.contains(
-            "view.widthAnchor constraintEqualToAnchor:rowStack.widthAnchor"
-        ));
+        assert!(helper.contains("view.widthAnchor constraintEqualToAnchor:rowStack.widthAnchor"));
         assert!(!helper.contains("rowStack.alignment = NSLayoutAttributeWidth"));
         assert!(helper.contains("SBNativeControlColumnWidth = 64.0"));
         assert!(helper.contains(
@@ -2805,15 +2762,14 @@ mod tests {
         assert!(helper.contains(
             "controlColumn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor"
         ));
-        assert!(helper.contains(
-            "settings.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor"
-        ));
-        assert!(helper.contains(
-            "customise.leadingAnchor constraintEqualToAnchor:settings.trailingAnchor"
-        ));
-        assert!(helper.contains(
-            "customise.trailingAnchor constraintEqualToAnchor:quit.leadingAnchor"
-        ));
+        assert!(
+            helper.contains("settings.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor")
+        );
+        assert!(helper
+            .contains("customise.leadingAnchor constraintEqualToAnchor:settings.trailingAnchor"));
+        assert!(
+            helper.contains("customise.trailingAnchor constraintEqualToAnchor:quit.leadingAnchor")
+        );
         assert!(!helper.contains("customise.centerXAnchor"));
         assert!(!helper.contains("customise.widthAnchor constraintGreaterThanOrEqualToConstant"));
         assert!(
@@ -2835,32 +2791,24 @@ mod tests {
                 >= 3
         );
         assert!(helper.contains("customise.showsBorderOnlyWhileMouseInside = YES"));
-        assert!(helper.contains(
-            "quit.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor"
-        ));
+        assert!(
+            helper.contains("quit.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor")
+        );
         assert!(!helper.contains("NSStackViewDistributionEqualCentering"));
-        assert!(helper.contains(
-            "systemFontOfSize:15.0 weight:NSFontWeightMedium"
-        ));
-        assert!(helper.contains(
-            "systemFontOfSize:NSFont.systemFontSize"
-        ));
-        assert!(helper.contains(
-            "systemFontOfSize:NSFont.smallSystemFontSize"
-        ));
-        assert!(helper.contains(
-            "systemFontOfSize:13.0 weight:NSFontWeightRegular"
-        ));
+        assert!(helper.contains("systemFontOfSize:15.0 weight:NSFontWeightMedium"));
+        assert!(helper.contains("systemFontOfSize:NSFont.systemFontSize"));
+        assert!(helper.contains("systemFontOfSize:NSFont.smallSystemFontSize"));
+        assert!(helper.contains("systemFontOfSize:13.0 weight:NSFontWeightRegular"));
     }
 
     #[test]
     fn design_contract_uses_appkit_semantic_visual_parameters() {
-        let readme = include_str!("../../README.md");
-        assert!(readme.contains("必须直接使用 AppKit 的原生组件与语义参数"));
-        assert!(readme.contains("不得额外叠加硬编码 RGB、透明度或自定义模糊强度"));
-        assert!(readme.contains("功能标题使用 `systemFontSize`"));
-        assert!(readme.contains("次级说明使用 `smallSystemFontSize`"));
-        assert!(readme.contains("品牌标题最多使用 `Medium`"));
+        let design_principles = include_str!("../../docs/DESIGN_PRINCIPLES.md");
+        assert!(design_principles.contains("直接使用 AppKit 原生组件与语义参数"));
+        assert!(design_principles.contains("不额外叠加硬编码 RGB、透明度或自定义模糊强度"));
+        assert!(design_principles.contains("功能标题使用 `systemFontSize`"));
+        assert!(design_principles.contains("次级说明使用 `smallSystemFontSize`"));
+        assert!(design_principles.contains("品牌标题最多使用 Medium"));
 
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("SBNativePopoverPanelWindow alloc"));
@@ -2914,9 +2862,7 @@ mod tests {
     #[test]
     fn native_preferences_use_appkit_without_dropping_existing_features() {
         let helper = include_str!("macos_helper.m");
-        assert!(helper.contains(
-            "@interface SBNativePreferencesController"
-        ));
+        assert!(helper.contains("@interface SBNativePreferencesController"));
         assert!(helper.contains("NSTabViewControllerTabStyleToolbar"));
         assert!(helper.contains("NSWindowToolbarStylePreference"));
         assert!(helper.contains("window.titleVisibility = NSWindowTitleVisible"));
@@ -3030,7 +2976,10 @@ mod tests {
             }]
         });
         let battery = find_audio_device_battery(&profile, "Sony WH-1000XM6").unwrap();
-        assert_eq!(battery, ("Sony WH-1000XM6".into(), Some(82), None, None, None));
+        assert_eq!(
+            battery,
+            ("Sony WH-1000XM6".into(), Some(82), None, None, None)
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -3066,7 +3015,19 @@ mod tests {
     fn distinguishes_actions_from_settings_destinations() {
         assert_eq!(control_mode("screenSaver"), "action");
         assert_eq!(control_mode("emptyTrash"), "action");
+        assert_eq!(control_mode("quitApps"), "action");
         assert_eq!(control_mode("resolution"), "choice");
+    }
+
+    #[test]
+    fn quit_other_apps_uses_a_safe_appkit_termination_policy() {
+        let helper = include_str!("macos_helper.m");
+        assert!(helper.contains("NSApplicationActivationPolicyRegular"));
+        assert!(helper.contains("com.apple.finder"));
+        assert!(helper.contains("application.processIdentifier == currentProcessID"));
+        assert!(helper.contains("application.processIdentifier == previousFrontmostProcessID"));
+        assert!(helper.contains("[application terminate]"));
+        assert!(!helper.contains("[application forceTerminate]"));
     }
 
     #[cfg(target_os = "macos")]
@@ -3122,11 +3083,8 @@ mod tests {
     #[test]
     fn stops_a_process_after_its_timeout() {
         let started = Instant::now();
-        let result = run_process_with_timeout(
-            "/bin/sh",
-            &["-c", "sleep 1"],
-            Duration::from_millis(50),
-        );
+        let result =
+            run_process_with_timeout("/bin/sh", &["-c", "sleep 1"], Duration::from_millis(50));
 
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_millis(500));
@@ -3153,7 +3111,8 @@ mod tests {
             let restore = super::set_direct_system_toggle(id, before.enabled != 0);
 
             let changed = change.unwrap_or_else(|error| panic!("could not change {id}: {error}"));
-            let (after, _) = observed.unwrap_or_else(|error| panic!("could not verify {id}: {error}"));
+            let (after, _) =
+                observed.unwrap_or_else(|error| panic!("could not verify {id}: {error}"));
             restore.unwrap_or_else(|error| panic!("could not restore {id}: {error}"));
             assert_eq!(changed.enabled != 0, requested, "{id} setter result");
             assert_eq!(after.enabled != 0, requested, "{id} read-back result");

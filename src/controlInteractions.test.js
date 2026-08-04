@@ -5,6 +5,7 @@ import {
   CONTROL_KINDS,
   controlKind,
   controlSwitchState,
+  quitAppsRequestCount,
   usesSwitchAffordance,
 } from './controlInteractions.js';
 
@@ -18,6 +19,13 @@ test('classifies persistent controls as toggles', () => {
 test('classifies one-time operations as actions', () => {
   assert.equal(controlKind('screenSaver'), CONTROL_KINDS.ACTION);
   assert.equal(controlKind('emptyTrash'), CONTROL_KINDS.ACTION);
+  assert.equal(controlKind('quitApps'), CONTROL_KINDS.ACTION);
+});
+
+test('reads the number of applications that received a normal quit request', () => {
+  assert.equal(quitAppsRequestCount('quit-apps-requested:7'), 7);
+  assert.equal(quitAppsRequestCount('quit-apps-requested:0'), 0);
+  assert.equal(quitAppsRequestCount('unexpected'), null);
 });
 
 test('persistent and one-time controls share the switch affordance', () => {
