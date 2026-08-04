@@ -2803,12 +2803,12 @@ mod tests {
 
     #[test]
     fn design_contract_uses_appkit_semantic_visual_parameters() {
-        let readme = include_str!("../../README.md");
-        assert!(readme.contains("必须直接使用 AppKit 的原生组件与语义参数"));
-        assert!(readme.contains("不得额外叠加硬编码 RGB、透明度或自定义模糊强度"));
-        assert!(readme.contains("功能标题使用 `systemFontSize`"));
-        assert!(readme.contains("次级说明使用 `smallSystemFontSize`"));
-        assert!(readme.contains("品牌标题最多使用 `Medium`"));
+        let design_principles = include_str!("../../docs/DESIGN_PRINCIPLES.md");
+        assert!(design_principles.contains("直接使用 AppKit 原生组件与语义参数"));
+        assert!(design_principles.contains("不额外叠加硬编码 RGB、透明度或自定义模糊强度"));
+        assert!(design_principles.contains("功能标题使用 `systemFontSize`"));
+        assert!(design_principles.contains("次级说明使用 `smallSystemFontSize`"));
+        assert!(design_principles.contains("品牌标题最多使用 Medium"));
 
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("SBNativePopoverPanelWindow alloc"));
