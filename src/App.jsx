@@ -8,6 +8,7 @@ import {
   Disc3,
   Eye,
   EyeOff,
+  FolderDown,
   FolderOpen,
   Gauge,
   Grid3X3,
@@ -44,6 +45,8 @@ import {
 } from './controlInteractions.js';
 import {
   checkNativeAppUpdate,
+  getNativeAppIdentifier,
+  getNativeAppName,
   getNativeAppVersion,
   getNativeAutostartEnabled,
   getNativeDisplayConfiguration,
@@ -76,6 +79,12 @@ import {
   validateNativeGlobalShortcut,
 } from './nativeBridge.js';
 import { recoveryPaneForError } from './nativeErrors.js';
+import {
+  RELEASE_NOTES,
+  RELEASE_NOTES_VERSION,
+  shouldPresentReleaseNotes,
+  updateCheckIsDue,
+} from './releaseNotes.js';
 import { displayResolutionSummary, primaryDisplay } from './resolutionModel.js';
 import {
   conflictingShortcutId,
@@ -100,13 +109,13 @@ const COPY = {
     quitAppsNone: 'No other apps are open',
     quitAppsRequested: 'Quit requested · {count} apps',
     quitApps: ['Quit other apps', 'Keeps your current app, OneTouch and Finder'],
-    preview: 'Preview mode', connected: 'macOS connected', available: 'available', unavailableFeature: 'Not available', unknownState: 'Click once to authorise and read the current state', title: 'OneTouch', subtitle: 'Quick controls', customise: 'Customise', quit: 'Quit', settings: 'Settings', close: 'Close menu', outsideClose: 'Click outside to close', open: 'Open OneTouch menu', enabled: 'enabled', disabled: 'disabled', processing: 'Processing…', completed: 'Completed', trashAlreadyEmpty: 'Trash is already empty', runAction: 'Run', chooseAction: 'Choose', openSettings: 'Open', confirmAction: 'Confirm', confirmHint: 'Click Confirm again to continue', openingSettings: 'Opening System Settings', unavailable: 'The macOS command could not be completed', permissionRequired: 'This control needs macOS permission', airpodsUnpaired: 'No paired Bluetooth headphones found', airpodsDisconnected: 'Not connected', resolutionPanelTitle: 'Screen resolution', resolutionBack: 'Back to controls', resolutionLoading: 'Reading available resolutions…', resolutionNoDisplay: 'No display', resolutionNoModes: 'No compatible resolutions were found.', resolutionDisplays: 'Displays', resolutionOptions: 'Available resolutions', resolutionHiDpi: 'HiDPI', resolutionStandard: 'Standard', retry: 'Try again', timerTitle: 'Turn off timer', timerBack: 'Back to controls', timerPrompt: 'Choose how long this stays on', timer30m: '30 minutes', timer1h: '1 hour', timer2h: '2 hours', timer4h: '4 hours', timerToday: 'Until the end of today', timerNone: 'No timer', timerNoneNote: 'Keep the current state until you change it', timerTurnsOff: 'OneTouch will turn it off automatically', timerExpired: 'Timer finished', timerRetry: 'Could not turn it off · retrying in 1 minute', timerLongPressHint: 'Click to choose a duration', diskLongPressHint: 'Hold to manage protected disks', diskPanelTitle: 'Protected disks', diskPanelSubtitle: 'Protected disks stay connected', diskBack: 'Back to controls', diskLoading: 'Reading ejectable disks…', diskNone: 'No ejectable disks or disk images are mounted.', diskProtected: 'Protected — OneTouch will skip this disk', diskWillEject: 'Will be ejected by the main switch', desktop: ['Hide desktop icons', 'Finder'], darkMode: ['Dark mode', 'Click the switch to choose a duration'], awake: ['Keep awake', 'Click the switch to choose a duration'], airpods: ['Bluetooth headphones', 'Automatically uses the connected or most recent audio device'], dnd: ['Focus', 'Click the switch to choose a duration'], nightShift: ['Night Shift', 'Warm the display colours'], screenSaver: ['Screen saver', 'Start a calm screen saver'], trueTone: ['True Tone', 'Match the display to ambient light'], frontApp: ['Switch front app', 'Bring the next app forward'], muteMic: ['Mute microphone', 'Restore the previous input volume when unmuted'], xcodeClean: ['Clean Xcode cache', 'Remove derived data'], emptyTrash: ['Empty Trash', 'Remove discarded files'], ejectDisk: ['Eject disks', 'Eject all · hold the switch to protect disks'], clipboard: ['Clear clipboard', 'Remove copied content'], hideWindow: ['Hide window', 'Hide the front app'], hideDock: ['Hide Dock', 'Show or hide the Dock'], lowPower: ['Low power mode', 'Reduce energy use'], highPower: ['High Power mode', 'Increase sustained performance on supported Macs'], music: ['Music playback', 'Play or pause the current queue'], spotify: ['Spotify playback', 'Play or pause Spotify'], hiddenFiles: ['Show hidden files', 'Reveal files in Finder'], displaySleep: ['Display sleep', 'Turn the display off'], resolution: ['Screen resolution', 'Choose directly in OneTouch'], hideWidgets: ['Hide desktop widgets', 'Keep the desktop clear in every workspace mode'], stageManager: ['Stage Manager', 'Organise open windows around the current task'], cleanScreen: ['Clean screen', 'Hold Esc to finish'], lockKeyboard: ['Lock keyboard', 'Use the menu to unlock'], lockScreen: ['Lock screen', 'Require your password'],
+    preview: 'Preview mode', connected: 'macOS connected', available: 'available', unavailableFeature: 'Not available', unknownState: 'Click once to authorise and read the current state', title: 'OneTouch', subtitle: 'Quick controls', customise: 'Customise', quit: 'Quit', settings: 'Settings', close: 'Close menu', outsideClose: 'Click outside to close', open: 'Open OneTouch menu', enabled: 'enabled', disabled: 'disabled', processing: 'Processing…', completed: 'Completed', trashAlreadyEmpty: 'Trash is already empty', downloadsAlreadyEmpty: 'Downloads folder is already empty', runAction: 'Run', chooseAction: 'Choose', openSettings: 'Open', confirmAction: 'Confirm', confirmHint: 'Click Confirm again to continue', openingSettings: 'Opening System Settings', unavailable: 'The macOS command could not be completed', permissionRequired: 'This control needs macOS permission', airpodsUnpaired: 'No paired Bluetooth headphones found', airpodsDisconnected: 'Not connected', resolutionPanelTitle: 'Screen resolution', resolutionBack: 'Back to controls', resolutionLoading: 'Reading available resolutions…', resolutionNoDisplay: 'No display', resolutionNoModes: 'No compatible resolutions were found.', resolutionDisplays: 'Displays', resolutionOptions: 'Available resolutions', resolutionHiDpi: 'HiDPI', resolutionStandard: 'Standard', retry: 'Try again', timerTitle: 'Turn off timer', timerBack: 'Back to controls', timerPrompt: 'Choose how long this stays on', timer30m: '30 minutes', timer1h: '1 hour', timer2h: '2 hours', timer4h: '4 hours', timerToday: 'Until the end of today', timerNone: 'No timer', timerNoneNote: 'Keep the current state until you change it', timerTurnsOff: 'OneTouch will turn it off automatically', timerExpired: 'Timer finished', timerRetry: 'Could not turn it off · retrying in 1 minute', timerLongPressHint: 'Click to choose a duration', diskLongPressHint: 'Hold to manage protected disks', diskPanelTitle: 'Protected disks', diskPanelSubtitle: 'Protected disks stay connected', diskBack: 'Back to controls', diskLoading: 'Reading ejectable disks…', diskNone: 'No ejectable disks or disk images are mounted.', diskProtected: 'Protected — OneTouch will skip this disk', diskWillEject: 'Will be ejected by the main switch', desktop: ['Hide desktop icons', 'Finder'], darkMode: ['Dark mode', 'Click the switch to choose a duration'], awake: ['Keep awake', 'Click the switch to choose a duration'], airpods: ['Bluetooth headphones', 'Automatically uses the connected or most recent audio device'], dnd: ['Focus', 'Click the switch to choose a duration'], nightShift: ['Night Shift', 'Warm the display colours'], screenSaver: ['Screen saver', 'Start a calm screen saver'], trueTone: ['True Tone', 'Match the display to ambient light'], frontApp: ['Switch front app', 'Bring the next app forward'], muteMic: ['Mute microphone', 'Restore the previous input volume when unmuted'], xcodeClean: ['Clean Xcode cache', 'Remove derived data'], emptyTrash: ['Empty Trash', 'Remove discarded files'], clearDownloads: ['Clear Downloads', 'Move all contents to Trash'], ejectDisk: ['Eject disks', 'Eject all · hold the switch to protect disks'], clipboard: ['Clear clipboard', 'Remove copied content'], hideWindow: ['Hide window', 'Hide the front app'], hideDock: ['Hide Dock', 'Show or hide the Dock'], lowPower: ['Low power mode', 'Reduce energy use'], highPower: ['High Power mode', 'Increase sustained performance on supported Macs'], music: ['Music playback', 'Play or pause the current queue'], spotify: ['Spotify playback', 'Play or pause Spotify'], hiddenFiles: ['Show hidden files', 'Reveal files in Finder'], displaySleep: ['Display sleep', 'Turn the display off'], resolution: ['Screen resolution', 'Choose directly in OneTouch'], hideWidgets: ['Hide desktop widgets', 'Keep the desktop clear in every workspace mode'], stageManager: ['Stage Manager', 'Organise open windows around the current task'], cleanScreen: ['Clean screen', 'Hold Esc to finish'], lockKeyboard: ['Lock keyboard', 'Use the menu to unlock'], lockScreen: ['Lock screen', 'Require your password'],
   },
   zh: {
     quitAppsNone: '没有需要关闭的应用',
     quitAppsRequested: '已请求关闭 {count} 个应用',
     quitApps: ['关闭其他应用', '保留当前应用、OneTouch 与 Finder'],
-    preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在处理中…', completed: '已完成', trashAlreadyEmpty: '垃圾桶已经空了', runAction: '执行', chooseAction: '选择', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', timerRetry: '关闭失败 · 1 分钟后重试', timerLongPressHint: '点击选择开启时长', diskLongPressHint: '长按管理受保护磁盘', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取可推出磁盘…', diskNone: '当前没有可推出的磁盘或磁盘映像。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '点击开关选择开启时长'], awake: ['保持唤醒', '点击开关选择开启时长'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '点击开关选择开启时长'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], ejectDisk: ['推出磁盘', '短按全部推出 · 长按保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
+    preview: '预览模式', connected: '已连接 macOS', available: '可用', unavailableFeature: '当前不可用', unknownState: '点击一次授权并读取当前状态', title: 'OneTouch', subtitle: '快捷控制', customise: '自定义', quit: '退出', settings: '设置', close: '关闭菜单', outsideClose: '点击空白处关闭', open: '打开 OneTouch 菜单', enabled: '已开启', disabled: '已关闭', processing: '正在处理中…', completed: '已完成', trashAlreadyEmpty: '垃圾桶已经空了', downloadsAlreadyEmpty: '下载文件夹已经空了', runAction: '执行', chooseAction: '选择', openSettings: '打开', confirmAction: '确认', confirmHint: '再次点击“确认”继续', openingSettings: '正在打开系统设置', unavailable: '无法完成 macOS 命令', permissionRequired: '此功能需要 macOS 权限', airpodsUnpaired: '没有找到已配对的蓝牙耳机', airpodsDisconnected: '暂未连接', resolutionPanelTitle: '屏幕分辨率', resolutionBack: '返回控制列表', resolutionLoading: '正在读取可用分辨率…', resolutionNoDisplay: '没有显示器', resolutionNoModes: '没有找到兼容的分辨率。', resolutionDisplays: '显示器', resolutionOptions: '可用分辨率', resolutionHiDpi: 'HiDPI', resolutionStandard: '标准', retry: '重试', timerTitle: '定时关闭', timerBack: '返回控制列表', timerPrompt: '选择保持开启的时长', timer30m: '30 分钟', timer1h: '1 小时', timer2h: '2 小时', timer4h: '4 小时', timerToday: '直到今天结束', timerNone: '不定时', timerNoneNote: '保持当前状态，直到你再次切换', timerTurnsOff: '到时由 OneTouch 自动关闭', timerExpired: '定时已结束', timerRetry: '关闭失败 · 1 分钟后重试', timerLongPressHint: '点击选择开启时长', diskLongPressHint: '长按管理受保护磁盘', diskPanelTitle: '受保护的磁盘', diskPanelSubtitle: '受保护的磁盘会保持连接', diskBack: '返回控制列表', diskLoading: '正在读取可推出磁盘…', diskNone: '当前没有可推出的磁盘或磁盘映像。', diskProtected: '已保护，OneTouch 会跳过它', diskWillEject: '主开关执行时会推出', desktop: ['隐藏桌面图标', 'Finder'], darkMode: ['深色模式', '点击开关选择开启时长'], awake: ['保持唤醒', '点击开关选择开启时长'], airpods: ['蓝牙耳机', '自动选择已连接或最近使用的音频设备'], dnd: ['专注模式', '点击开关选择开启时长'], nightShift: ['夜览', '调暖显示屏色温'], screenSaver: ['屏幕保护程序', '启动安静的屏幕保护'], trueTone: ['原彩显示', '根据环境光调整显示效果'], frontApp: ['切换前台应用', '将下一个应用带到前台'], muteMic: ['麦克风静音', '取消静音时恢复上次输入音量'], xcodeClean: ['清理 Xcode 缓存', '删除派生数据'], emptyTrash: ['清空废纸篓', '移除已丢弃的文件'], clearDownloads: ['清理下载文件夹', '将全部内容移到废纸篓'], ejectDisk: ['推出磁盘', '短按全部推出 · 长按保护磁盘'], clipboard: ['清空剪贴板', '移除已复制的内容'], hideWindow: ['隐藏窗口', '隐藏前台应用'], hideDock: ['隐藏 Dock', '显示或隐藏 Dock'], lowPower: ['低电量模式', '降低 Mac 能耗'], highPower: ['高能耗模式', '在支持的 Mac 上提高持续性能'], music: ['音乐播放', '播放或暂停当前队列'], spotify: ['Spotify 播放', '播放或暂停 Spotify'], hiddenFiles: ['显示隐藏文件', '在 Finder 中显示文件'], displaySleep: ['显示器休眠', '关闭显示屏'], resolution: ['屏幕分辨率', '直接在 OneTouch 中选择'], hideWidgets: ['隐藏桌面小组件', '在普通桌面和台前调度中保持整洁'], stageManager: ['台前调度', '围绕当前任务整理已打开的窗口'], cleanScreen: ['屏幕清洁', '长按 Esc 退出'], lockKeyboard: ['锁定键盘', '从菜单中解锁'], lockScreen: ['锁定屏幕', '需要密码才能继续'],
   },
 };
 
@@ -144,7 +153,7 @@ const KEYBOARD_CLEANING_COPY = Object.freeze({
 
 const SWITCHES = [
   { id: 'desktop', icon: Grid3X3 }, { id: 'darkMode', icon: MoonStar }, { id: 'awake', icon: Coffee }, { id: 'airpods', icon: Headphones }, { id: 'dnd', icon: BellOff }, { id: 'nightShift', icon: MoonStar }, { id: 'screenSaver', icon: MonitorUp }, { id: 'trueTone', icon: Sun },
-  { id: 'frontApp', icon: AppWindowMac }, { id: 'muteMic', icon: MicOff }, { id: 'xcodeClean', icon: BrushCleaning }, { id: 'emptyTrash', icon: Trash2 }, { id: 'ejectDisk', icon: Disc3 }, { id: 'clipboard', icon: Paintbrush }, { id: 'hideWindow', icon: EyeOff }, { id: 'hideDock', icon: PanelTopClose }, { id: 'lowPower', icon: Zap }, { id: 'highPower', icon: Gauge }, { id: 'music', icon: Music2 }, { id: 'spotify', icon: AudioLines }, { id: 'hiddenFiles', icon: FolderOpen }, { id: 'displaySleep', icon: MonitorUp }, { id: 'resolution', icon: MonitorCog }, { id: 'hideWidgets', icon: LayoutDashboard }, { id: 'stageManager', icon: PanelsTopLeft }, { id: 'cleanScreen', icon: Eye }, { id: 'lockKeyboard', icon: Keyboard }, { id: 'lockScreen', icon: Lock },
+  { id: 'frontApp', icon: AppWindowMac }, { id: 'muteMic', icon: MicOff }, { id: 'xcodeClean', icon: BrushCleaning }, { id: 'emptyTrash', icon: Trash2 }, { id: 'clearDownloads', icon: FolderDown }, { id: 'ejectDisk', icon: Disc3 }, { id: 'clipboard', icon: Paintbrush }, { id: 'hideWindow', icon: EyeOff }, { id: 'hideDock', icon: PanelTopClose }, { id: 'lowPower', icon: Zap }, { id: 'highPower', icon: Gauge }, { id: 'music', icon: Music2 }, { id: 'spotify', icon: AudioLines }, { id: 'hiddenFiles', icon: FolderOpen }, { id: 'displaySleep', icon: MonitorUp }, { id: 'resolution', icon: MonitorCog }, { id: 'hideWidgets', icon: LayoutDashboard }, { id: 'stageManager', icon: PanelsTopLeft }, { id: 'cleanScreen', icon: Eye }, { id: 'lockKeyboard', icon: Keyboard }, { id: 'lockScreen', icon: Lock },
   { id: 'quitApps', icon: AppWindowMac },
 ].map((item) => ({ ...item, kind: controlKind(item.id) }));
 
@@ -155,19 +164,20 @@ const MIN_ACTION_PROGRESS_MS = 650;
 const COMPLETION_FEEDBACK_MS = 1400;
 const SECONDARY_PANEL_EXIT_MS = 100;
 const GITHUB_URL = 'https://github.com/Cherry-Yiran/OneTouch';
+const X_URL = 'https://x.com/hizhm1';
 const TIMER_POPOVER_WIDTH = 178;
 const TIMER_POPOVER_HEIGHT = 220;
 const TIMER_POPOVER_GAP = 6;
 const TIMER_POPOVER_MARGIN = 8;
 
-const INITIAL_SWITCHES = { desktop: true, darkMode: true, awake: false, airpods: true, dnd: true, nightShift: true, screenSaver: false, trueTone: true, frontApp: false, muteMic: false, xcodeClean: false, emptyTrash: false, ejectDisk: false, clipboard: false, hideWindow: false, hideDock: false, lowPower: false, highPower: false, music: false, spotify: false, hiddenFiles: false, displaySleep: false, resolution: false, hideWidgets: false, stageManager: false, cleanScreen: false, lockKeyboard: false, lockScreen: false, quitApps: false };
+const INITIAL_SWITCHES = { desktop: true, darkMode: true, awake: false, airpods: true, dnd: true, nightShift: true, screenSaver: false, trueTone: true, frontApp: false, muteMic: false, xcodeClean: false, emptyTrash: false, clearDownloads: false, ejectDisk: false, clipboard: false, hideWindow: false, hideDock: false, lowPower: false, highPower: false, music: false, spotify: false, hiddenFiles: false, displaySleep: false, resolution: false, hideWidgets: false, stageManager: false, cleanScreen: false, lockKeyboard: false, lockScreen: false, quitApps: false };
 
 const DEFAULT_VISIBLE_IDS = SWITCHES.slice(0, 8).map((item) => item.id);
 const ALL_SWITCH_IDS = SWITCHES.map((item) => item.id);
 const NATIVE_SYMBOLS = Object.freeze({
   desktop: 'square.grid.3x3', darkMode: 'moon.stars', awake: 'cup.and.saucer', airpods: 'headphones',
   dnd: 'moon.fill', nightShift: 'moon.haze', screenSaver: 'display', trueTone: 'sun.max',
-  frontApp: 'macwindow.on.rectangle', muteMic: 'mic.slash', xcodeClean: 'paintbrush', emptyTrash: 'trash',
+  frontApp: 'macwindow.on.rectangle', muteMic: 'mic.slash', xcodeClean: 'paintbrush', emptyTrash: 'trash', clearDownloads: 'folder.badge.minus',
   ejectDisk: 'eject', clipboard: 'clipboard', hideWindow: 'eye.slash', hideDock: 'dock.rectangle',
   lowPower: 'bolt', highPower: 'gauge.with.dots.needle.67percent', music: 'music.note', spotify: 'waveform',
   hiddenFiles: 'folder', displaySleep: 'display', resolution: 'display.and.arrow.down',
@@ -344,6 +354,10 @@ function localiseNativeError(error, language, text) {
   if (/Bluetooth permission/i.test(message)) return '需要在系统设置中允许蓝牙权限';
   if (/Focus status permission.*denied/i.test(message)) return '专注状态权限已被拒绝，请允许后重试';
   if (/Focus status permission/i.test(message)) return '需要允许读取专注状态';
+  if (/Downloads folder access is required/i.test(message)) return '需要允许 OneTouch 访问下载文件夹';
+  if (/could not locate the Downloads folder/i.test(message)) return '无法找到下载文件夹';
+  if (/Moved \d+ item\(s\).*could not move/i.test(message)) return '部分内容已移到废纸篓，但仍有文件无法处理';
+  if (/could not move .* to Trash/i.test(message)) return '无法将下载文件夹中的内容移到废纸篓';
   if (/not supported by the active display/i.test(message)) return '当前显示器不支持此功能';
   if (/unavailable for the active display/i.test(message)) return '当前显示器无法使用此功能';
   if (/unsupported on this Mac/i.test(message)) return '这台 Mac 不支持此功能';
@@ -378,6 +392,8 @@ export default function App() {
   const nativeView = new URLSearchParams(window.location.search).get('view');
   const nativeApp = isNativeApp();
   const [language, setLanguage] = useState(() => localStorage.getItem('switchboard-language') || 'zh');
+  const [appName, setAppName] = useState('OneTouch');
+  const [appIdentifier, setAppIdentifier] = useState('');
   const [appVersion, setAppVersion] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
@@ -407,6 +423,8 @@ export default function App() {
   const [nativePreferencesMessage, setNativePreferencesMessage] = useState('');
   const [nativePreferencesMessageError, setNativePreferencesMessageError] = useState(false);
   const [nativeUpdate, setNativeUpdate] = useState({ phase: 'idle', version: '', progress: null });
+  const [whatsNewVisible, setWhatsNewVisible] = useState(false);
+  const [whatsNewExpanded, setWhatsNewExpanded] = useState(false);
   const [pendingActionIds, setPendingActionIds] = useState(() => new Set());
   const [completedActionIds, setCompletedActionIds] = useState(() => new Set());
   const [actionResultMessages, setActionResultMessages] = useState({});
@@ -437,10 +455,12 @@ export default function App() {
   const timerRearmAttemptedRef = useRef(new Set());
   const secondaryCloseTimerRef = useRef(null);
   const secondaryClosingRef = useRef(null);
+  const isBetaBuild = appIdentifier === 'design.ryan.onetouch.beta';
   const text = useMemo(() => ({
     ...COPY[language],
+    title: appName,
     lockKeyboard: KEYBOARD_CLEANING_COPY[language],
-  }), [language]);
+  }), [appName, language]);
 
   const closeSecondaryPanel = (panel) => {
     if (secondaryClosingRef.current) return;
@@ -530,8 +550,25 @@ export default function App() {
   useEffect(() => localStorage.setItem('switchboard-shortcuts', JSON.stringify(shortcuts)), [shortcuts]);
   useEffect(() => localStorage.setItem('switchboard-timers', JSON.stringify(timers)), [timers]);
   useEffect(() => {
+    getNativeAppIdentifier().then(setAppIdentifier).catch(() => setAppIdentifier(''));
+    getNativeAppName().then(setAppName).catch(() => setAppName('OneTouch'));
     getNativeAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
   }, []);
+  useEffect(() => {
+    if (!appVersion) return;
+    const seenVersion = localStorage.getItem('onetouch-whats-new-seen-version') || '';
+    setWhatsNewVisible(shouldPresentReleaseNotes(appVersion, seenVersion));
+    setWhatsNewExpanded(false);
+  }, [appVersion]);
+  useEffect(() => {
+    if (!nativeApp || nativeView !== 'popover' || !appIdentifier || isBetaBuild) return undefined;
+    const storageKey = `onetouch-update-last-check-${appIdentifier}`;
+    if (!updateCheckIsDue(localStorage.getItem(storageKey))) return undefined;
+    const timer = window.setTimeout(() => {
+      checkForAppUpdate({ manual: false }).catch(() => undefined);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [appIdentifier, isBetaBuild, nativeApp, nativeView]);
   useEffect(() => {
     if (nativeView !== 'preferences') return;
     sendNativeCustomizationToPopover({ visibleIds, orderedIds, shortcuts }).catch(() => undefined);
@@ -883,11 +920,13 @@ export default function App() {
           const quitAppsCount = id === 'quitApps' ? quitAppsRequestCount(result?.message) : null;
           const completionMessage = id === 'emptyTrash' && result?.message === 'trash-already-empty'
             ? text.trashAlreadyEmpty
-            : quitAppsCount === 0
-              ? text.quitAppsNone
-              : quitAppsCount != null
-                ? text.quitAppsRequested.replace('{count}', String(quitAppsCount))
-                : text.completed;
+            : id === 'clearDownloads' && result?.message === 'downloads-already-empty'
+              ? text.downloadsAlreadyEmpty
+              : quitAppsCount === 0
+                ? text.quitAppsNone
+                : quitAppsCount != null
+                  ? text.quitAppsRequested.replace('{count}', String(quitAppsCount))
+                  : text.completed;
           setAnnouncement(`${controlTitle}: ${completionMessage}`);
           setActionResultMessages((current) => ({ ...current, [id]: completionMessage }));
           setCompletedActionIds((current) => new Set(current).add(id));
@@ -1087,6 +1126,62 @@ export default function App() {
     }
   };
 
+  const installPendingAppUpdate = async () => {
+    const update = pendingNativeUpdateRef.current;
+    if (!update) {
+      await checkForAppUpdate({ manual: true });
+      return;
+    }
+    let downloaded = 0;
+    let contentLength = null;
+    setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === 'Started') {
+          contentLength = event.data.contentLength || null;
+          setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
+        } else if (event.event === 'Progress') {
+          downloaded += event.data.chunkLength;
+          const progress = contentLength
+            ? Math.min(100, Math.round((downloaded / contentLength) * 100))
+            : null;
+          setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress }));
+        } else if (event.event === 'Finished') {
+          setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
+        }
+      });
+      setNativeUpdate((current) => ({ ...current, phase: 'restarting', progress: 100 }));
+      await relaunchNativeApp();
+    } catch {
+      setNativeUpdate((current) => ({ ...current, phase: 'error', progress: null }));
+    }
+  };
+
+  const checkForAppUpdate = async ({ manual = false } = {}) => {
+    if (isBetaBuild) {
+      if (manual) setNativeUpdate({ phase: 'disabled', version: '', progress: null });
+      return null;
+    }
+    pendingNativeUpdateRef.current = null;
+    if (manual) setNativeUpdate({ phase: 'checking', version: '', progress: null });
+    try {
+      const update = await checkNativeAppUpdate();
+      if (appIdentifier) {
+        localStorage.setItem(`onetouch-update-last-check-${appIdentifier}`, String(Date.now()));
+      }
+      if (!update) {
+        setNativeUpdate({ phase: manual ? 'upToDate' : 'idle', version: '', progress: null });
+        return null;
+      }
+      pendingNativeUpdateRef.current = update;
+      setNativeUpdate({ phase: 'available', version: update.version, progress: null });
+      return update;
+    } catch {
+      setNativeUpdate({ phase: manual ? 'error' : 'idle', version: '', progress: null });
+      return null;
+    }
+  };
+
   nativePreferencesActionRef.current = async ({
     action,
     controlId = '',
@@ -1105,46 +1200,10 @@ export default function App() {
     }
     if (action === 'appUpdate') {
       if (payload === 'install' && pendingNativeUpdateRef.current) {
-        const update = pendingNativeUpdateRef.current;
-        let downloaded = 0;
-        let contentLength = null;
-        setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
-        try {
-          await update.downloadAndInstall((event) => {
-            if (event.event === 'Started') {
-              contentLength = event.data.contentLength || null;
-              setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
-            } else if (event.event === 'Progress') {
-              downloaded += event.data.chunkLength;
-              const progress = contentLength
-                ? Math.min(100, Math.round((downloaded / contentLength) * 100))
-                : null;
-              setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress }));
-            } else if (event.event === 'Finished') {
-              setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
-            }
-          });
-          setNativeUpdate((current) => ({ ...current, phase: 'restarting', progress: 100 }));
-          await relaunchNativeApp();
-        } catch {
-          setNativeUpdate((current) => ({ ...current, phase: 'error', progress: null }));
-        }
+        await installPendingAppUpdate();
         return;
       }
-
-      pendingNativeUpdateRef.current = null;
-      setNativeUpdate({ phase: 'checking', version: '', progress: null });
-      try {
-        const update = await checkNativeAppUpdate();
-        if (!update) {
-          setNativeUpdate({ phase: 'upToDate', version: '', progress: null });
-          return;
-        }
-        pendingNativeUpdateRef.current = update;
-        setNativeUpdate({ phase: 'available', version: update.version, progress: null });
-      } catch {
-        setNativeUpdate({ phase: 'error', version: '', progress: null });
-      }
+      await checkForAppUpdate({ manual: true });
       return;
     }
     if (action === 'visibility' && ALL_SWITCH_IDS.includes(controlId)) {
@@ -1234,6 +1293,24 @@ export default function App() {
       await quit();
       return;
     }
+    if (action === 'updateInstall') {
+      await installPendingAppUpdate();
+      return;
+    }
+    if (action === 'updateRetry') {
+      await checkForAppUpdate({ manual: true });
+      return;
+    }
+    if (action === 'whatsNewExpand') {
+      setWhatsNewExpanded(true);
+      return;
+    }
+    if (action === 'whatsNewDismiss') {
+      localStorage.setItem('onetouch-whats-new-seen-version', RELEASE_NOTES_VERSION);
+      setWhatsNewVisible(false);
+      setWhatsNewExpanded(false);
+      return;
+    }
     if (!ALL_SWITCH_IDS.includes(controlId)) return;
     if (action === 'state') {
       const enabled = Boolean(value);
@@ -1275,6 +1352,63 @@ export default function App() {
     await activateControl(controlId);
   };
 
+  const nativeAnnouncement = useMemo(() => {
+    const copy = PREFERENCES_COPY[language];
+    if (nativeUpdate.phase === 'available') {
+      return {
+        kind: 'update',
+        title: copy.updateAvailable.replace('%s', nativeUpdate.version),
+        message: copy.updateReadyNote,
+        actionLabel: copy.downloadAndInstall,
+        action: 'updateInstall',
+        expanded: false,
+      };
+    }
+    if (nativeUpdate.phase === 'downloading') {
+      return {
+        kind: 'update',
+        title: copy.downloadingUpdate,
+        message: nativeUpdate.progress == null ? '' : `${nativeUpdate.progress}%`,
+        actionLabel: '',
+        action: '',
+        busy: true,
+        expanded: false,
+      };
+    }
+    if (nativeUpdate.phase === 'installing' || nativeUpdate.phase === 'restarting') {
+      return {
+        kind: 'update',
+        title: nativeUpdate.phase === 'installing' ? copy.installingUpdate : copy.restartingAfterUpdate,
+        message: copy.updateReadyNote,
+        actionLabel: '',
+        action: '',
+        busy: true,
+        expanded: false,
+      };
+    }
+    if (nativeUpdate.phase === 'error') {
+      return {
+        kind: 'update',
+        title: copy.updateFailed,
+        message: '',
+        actionLabel: copy.retryUpdate,
+        action: 'updateRetry',
+        error: true,
+        expanded: false,
+      };
+    }
+    if (!whatsNewVisible) return null;
+    const releaseCopy = RELEASE_NOTES[language];
+    return {
+      kind: 'whatsNew',
+      title: releaseCopy.title.replace('%s', appVersion),
+      message: whatsNewExpanded ? releaseCopy.items.join('\n') : releaseCopy.summary,
+      actionLabel: whatsNewExpanded ? releaseCopy.done : releaseCopy.view,
+      action: whatsNewExpanded ? 'whatsNewDismiss' : 'whatsNewExpand',
+      expanded: whatsNewExpanded,
+    };
+  }, [appVersion, language, nativeUpdate, whatsNewExpanded, whatsNewVisible]);
+
   const nativePopoverModel = useMemo(() => ({
     language,
     title: text.title,
@@ -1282,6 +1416,7 @@ export default function App() {
     settingsLabel: text.settings,
     customiseLabel: text.customise,
     quitLabel: text.quit,
+    announcement: nativeAnnouncement,
     rows: menuItems.map((item) => {
       const [defaultTitle, defaultDescription] = text[item.id];
       const control = nativeControls?.[item.id];
@@ -1352,6 +1487,7 @@ export default function App() {
     currentResolutionSummary,
     language,
     menuItems,
+    nativeAnnouncement,
     nativeApp,
     nativeControls,
     nativeSnapshotReady,
@@ -1369,9 +1505,10 @@ export default function App() {
 
   const accessibilityGuideModel = useMemo(() => ({
     ...ACCESSIBILITY_GUIDE_COPY[language],
+    appName,
     language,
     autoShow: true,
-  }), [language]);
+  }), [appName, language]);
 
   useEffect(() => {
     if (!nativeApp || nativeView !== 'popover') return;
@@ -1379,7 +1516,10 @@ export default function App() {
   }, [accessibilityGuideModel, nativeApp, nativeView]);
 
   const nativePreferencesModel = useMemo(() => {
-    const copy = PREFERENCES_COPY[language];
+    const copy = {
+      ...PREFERENCES_COPY[language],
+      aboutTitle: appName,
+    };
     let updateTitle = copy.checkForUpdates;
     let updateStatus = '';
     if (nativeUpdate.phase === 'checking') updateTitle = copy.checkingForUpdates;
@@ -1399,19 +1539,25 @@ export default function App() {
       updateTitle = copy.retryUpdate;
       updateStatus = copy.updateFailed;
     }
+    if (isBetaBuild) {
+      updateTitle = copy.betaUpdateTitle;
+      updateStatus = copy.betaUpdateStatus;
+    }
     return {
       language,
       appVersion,
       githubURL: GITHUB_URL,
+      xURL: X_URL,
       startAtLogin,
       startAtLoginLoading,
       startAtLoginError,
       shortcutMessage: nativePreferencesMessage,
       shortcutMessageError: nativePreferencesMessageError,
       update: {
-        phase: nativeUpdate.phase,
+        phase: isBetaBuild ? 'disabled' : nativeUpdate.phase,
         title: updateTitle,
         status: updateStatus,
+        disabled: isBetaBuild,
       },
       strings: copy,
       rows: orderedIds.map((id) => {
@@ -1430,7 +1576,9 @@ export default function App() {
       }),
     };
   }, [
+    appName,
     appVersion,
+    isBetaBuild,
     language,
     nativePreferencesMessage,
     nativePreferencesMessageError,
@@ -1467,6 +1615,7 @@ export default function App() {
       setShortcuts={setShortcuts}
       nativeTitlebar={nativeView === 'preferences'}
       initialTab={preferencesInitialTab}
+      appName={appName}
       appVersion={appVersion}
       onClose={nativeView === 'preferences' ? hideNativeWindow : () => setPreferencesOpen(false)}
     />

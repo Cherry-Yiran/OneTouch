@@ -93,6 +93,8 @@ export const PREFERENCES_COPY = {
     version: 'Version %@',
     github: 'GitHub',
     githubPending: 'GitHub link coming soon',
+    x: 'X @hizhm1',
+    xPending: 'X link coming soon',
     checkForUpdates: 'Check for Updates…',
     checkingForUpdates: 'Checking…',
     updateAvailable: 'Version %s is available.',
@@ -103,6 +105,9 @@ export const PREFERENCES_COPY = {
     upToDate: 'OneTouch is up to date.',
     updateFailed: 'Could not check for updates. Please try again.',
     retryUpdate: 'Try Again',
+    updateReadyNote: 'OneTouch will restart automatically after installation.',
+    betaUpdateTitle: 'Beta build',
+    betaUpdateStatus: 'Beta builds do not install formal release updates.',
   },
   zh: {
     title: '偏好设置',
@@ -143,6 +148,8 @@ export const PREFERENCES_COPY = {
     version: '版本 %@',
     github: 'GitHub',
     githubPending: 'GitHub 链接稍后添加',
+    x: 'X @hizhm1',
+    xPending: 'X 链接稍后添加',
     checkForUpdates: '检查更新…',
     checkingForUpdates: '正在检查…',
     updateAvailable: '发现新版本 %s。',
@@ -153,6 +160,9 @@ export const PREFERENCES_COPY = {
     upToDate: 'OneTouch 已是最新版本。',
     updateFailed: '无法检查更新，请稍后重试。',
     retryUpdate: '重试',
+    updateReadyNote: '安装完成后 OneTouch 会自动重新启动。',
+    betaUpdateTitle: 'Beta 测试版',
+    betaUpdateStatus: '测试版不会安装正式版更新。',
   },
 };
 
@@ -379,6 +389,7 @@ export default function Preferences({
   setShortcuts,
   nativeTitlebar = false,
   initialTab = 'general',
+  appName = 'OneTouch',
   appVersion = '',
   onClose,
 }) {
@@ -397,7 +408,10 @@ export default function Preferences({
       distance: 6,
     },
   }));
-  const copy = PREFERENCES_COPY[language];
+  const copy = useMemo(() => ({
+    ...PREFERENCES_COPY[language],
+    aboutTitle: appName,
+  }), [appName, language]);
   const activeItems = useMemo(() => orderedIds.map((id) => items.find((item) => item.id === id)).filter(Boolean), [items, orderedIds]);
   const draggedItem = draggedId ? items.find((item) => item.id === draggedId) : null;
   const draggedTitle = draggedItem ? text[draggedItem.id]?.[0] : '';

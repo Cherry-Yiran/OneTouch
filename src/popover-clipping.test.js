@@ -53,3 +53,16 @@ test('an open detail panel removes the underlying controls from keyboard navigat
     assert.match(binding, /\?\s*true\s*:\s*undefined/);
   });
 });
+
+test('native update and whats-new notices preserve the fixed control rows', () => {
+  assert.match(macosHelper, /SBNativeAnnouncementHeight\s*=\s*60\.0/);
+  assert.match(macosHelper, /SBNativeExpandedAnnouncementHeight\s*=\s*112\.0/);
+  assert.match(macosHelper, /noticeButton\.bezelStyle = NSBezelStyleRounded/);
+  assert.match(macosHelper, /progress\.style = NSProgressIndicatorStyleSpinning/);
+  assert.match(macosHelper, /\[self updateHeader:model\]/);
+  assert.match(macosHelper, /SBNativeAnnouncementHeightForModel\(model\)/);
+  assert.match(app, /action === 'updateInstall'/);
+  assert.match(app, /action === 'whatsNewExpand'/);
+  assert.match(app, /action === 'whatsNewDismiss'/);
+  assert.match(app, /announcement: nativeAnnouncement/);
+});

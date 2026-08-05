@@ -129,21 +129,26 @@ test('disk copy covers every system-ejectable disk and disk image', () => {
   assert.doesNotMatch(app, /当前没有连接外置物理磁盘/);
 });
 
-test('about page keeps app identity, updating, and the native GitHub link', () => {
+test('about page groups identity, updating, and native social links', () => {
   assert.doesNotMatch(macosHelper, /strings\[@"aboutLead"\]/);
   assert.doesNotMatch(macosHelper, /strings\[@"safety"\]/);
-  assert.match(
-    macosHelper,
-    /for \(NSView \*view in @\[mark, title, self\.aboutVersion, self\.aboutUpdateButton,[\s\S]*self\.aboutUpdateStatus, self\.aboutGitHubButton\]\)/,
-  );
+  assert.match(macosHelper, /identityStack\.spacing = 4\.0/);
+  assert.match(macosHelper, /updateStack\.spacing = 6\.0/);
+  assert.match(macosHelper, /socialStack\.orientation = NSUserInterfaceLayoutOrientationHorizontal/);
+  assert.match(macosHelper, /socialStack\.spacing = 12\.0/);
   assert.match(macosHelper, /self\.aboutUpdateButton\.bezelStyle = NSBezelStyleRounded/);
   assert.match(macosHelper, /SBEmitNativePreferencesAction\(@"appUpdate", @"", request\)/);
   assert.match(macosHelper, /self\.aboutGitHubButton\.bezelStyle = NSBezelStyleAccessoryBarAction/);
+  assert.match(macosHelper, /self\.aboutXButton\.bezelStyle = NSBezelStyleAccessoryBarAction/);
+  assert.doesNotMatch(macosHelper, /arrow\.up\.right\.square/);
   assert.match(macosHelper, /NSWorkspace\.sharedWorkspace openURL:url/);
   assert.match(
     app,
     /const GITHUB_URL = 'https:\/\/github\.com\/Cherry-Yiran\/OneTouch'/,
   );
+  assert.match(app, /const X_URL = 'https:\/\/x\.com\/hizhm1'/);
+  assert.match(preferences, /x: 'X @hizhm1'/);
+  assert.match(app, /githubURL: GITHUB_URL,[\s\S]*xURL: X_URL/);
   assert.match(nativeBridge, /@tauri-apps\/plugin-updater/);
   assert.match(nativeBridge, /@tauri-apps\/plugin-process/);
 });

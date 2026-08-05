@@ -18,6 +18,10 @@ test('maps permission failures to a recoverable System Settings pane', () => {
     recoveryPaneForError('Focus status permission was denied'),
     SYSTEM_SETTINGS_PANES.FOCUS,
   );
+  assert.equal(
+    recoveryPaneForError('Downloads folder access is required'),
+    SYSTEM_SETTINGS_PANES.FILES_AND_FOLDERS,
+  );
 });
 
 test('does not offer settings recovery for ordinary operation failures', () => {

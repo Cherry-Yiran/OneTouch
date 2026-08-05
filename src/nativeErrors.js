@@ -3,6 +3,7 @@ export const SYSTEM_SETTINGS_PANES = Object.freeze({
   AUTOMATION: 'automation',
   BLUETOOTH: 'bluetooth',
   FOCUS: 'focus',
+  FILES_AND_FOLDERS: 'filesAndFolders',
 });
 
 export function recoveryPaneForError(error) {
@@ -18,6 +19,9 @@ export function recoveryPaneForError(error) {
   }
   if (/Bluetooth permission/i.test(message)) {
     return SYSTEM_SETTINGS_PANES.BLUETOOTH;
+  }
+  if (/Downloads folder access/i.test(message)) {
+    return SYSTEM_SETTINGS_PANES.FILES_AND_FOLDERS;
   }
   return null;
 }

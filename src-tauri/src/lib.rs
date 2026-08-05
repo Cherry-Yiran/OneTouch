@@ -30,7 +30,7 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
-const ALL_CONTROL_IDS: [&str; 29] = [
+const ALL_CONTROL_IDS: [&str; 30] = [
     "desktop",
     "darkMode",
     "awake",
@@ -43,6 +43,7 @@ const ALL_CONTROL_IDS: [&str; 29] = [
     "muteMic",
     "xcodeClean",
     "emptyTrash",
+    "clearDownloads",
     "ejectDisk",
     "clipboard",
     "hideWindow",
@@ -197,6 +198,7 @@ unsafe extern "C" {
         requested_count: *mut c_int,
         error_output: *mut *mut c_char,
     ) -> c_int;
+    fn sb_trash_downloads(moved_count: *mut c_int, error_output: *mut *mut c_char) -> c_int;
     fn sb_night_shift_get(
         status: *mut NativeFeatureStatus,
         error_output: *mut *mut c_char,
@@ -657,8 +659,10 @@ fn read_process_with_timeout(program: &str, args: &[&str], timeout: Duration) ->
 
 fn control_mode(id: &str) -> &'static str {
     match id {
-        "screenSaver" | "frontApp" | "xcodeClean" | "emptyTrash" | "ejectDisk" | "clipboard"
-        | "hideWindow" | "displaySleep" | "lockScreen" | "quitApps" => "action",
+        "screenSaver" | "frontApp" | "xcodeClean" | "emptyTrash" | "clearDownloads"
+        | "ejectDisk" | "clipboard" | "hideWindow" | "displaySleep" | "lockScreen" | "quitApps" => {
+            "action"
+        }
         "resolution" => "choice",
         _ => "toggle",
     }
@@ -1301,6 +1305,22 @@ fn empty_trash_result_message(already_empty: bool) -> Option<String> {
     already_empty.then(|| "trash-already-empty".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn trash_downloads() -> Result<usize, String> {
+    let mut moved_count = 0;
+    native_helper_result(|error| unsafe { sb_trash_downloads(&mut moved_count, error) })?;
+    Ok(moved_count.max(0) as usize)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_downloads() -> Result<usize, String> {
+    Err("Clearing Downloads is only available on macOS".to_string())
+}
+
+fn downloads_result_message(moved_count: usize) -> Option<String> {
+    (moved_count == 0).then(|| "downloads-already-empty".to_string())
+}
+
 fn normalise_disk_device(identifier: &str) -> String {
     if identifier.starts_with("/dev/") {
         identifier.to_string()
@@ -1514,6 +1534,10 @@ fn set_switch_blocking(
             result_message = empty_trash_result_message(already_empty);
         }),
         "emptyTrash" => Ok(()),
+        "clearDownloads" if enabled => trash_downloads().map(|moved_count| {
+            result_message = downloads_result_message(moved_count);
+        }),
+        "clearDownloads" => Ok(()),
         "ejectDisk" if enabled => eject_external_disks(),
         "ejectDisk" => Ok(()),
         "clipboard" if enabled => run_osascript("set the clipboard to \"\""),
@@ -1740,6 +1764,9 @@ fn system_settings_url(pane: &str) -> Option<&'static str> {
             Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
         }
         "focus" => Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Focus"),
+        "filesAndFolders" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        }
         _ => None,
     }
 }
@@ -2611,6 +2638,27 @@ mod tests {
     }
 
     #[test]
+    fn clear_downloads_moves_contents_to_trash_without_permanent_deletion() {
+        let helper = include_str!("macos_helper.m");
+        let implementation = helper
+            .split("int sb_trash_downloads")
+            .nth(1)
+            .and_then(|source| source.split("static void SBResetFeatureStatus").next())
+            .expect("Downloads trash implementation should be present");
+        assert!(implementation.contains("NSDownloadsDirectory"));
+        assert!(implementation.contains("trashItemAtURL"));
+        assert!(implementation.contains(".localized"));
+        assert!(implementation.contains(".DS_Store"));
+        assert!(!implementation.contains("removeItemAtURL"));
+        assert!(!implementation.contains("removeItemAtPath"));
+        assert_eq!(
+            super::downloads_result_message(0).as_deref(),
+            Some("downloads-already-empty")
+        );
+        assert_eq!(super::downloads_result_message(3), None);
+    }
+
+    #[test]
     fn keyboard_cleaning_filters_normal_modifier_and_media_keys() {
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("CGEventMaskBit(kCGEventKeyDown)"));
@@ -2860,6 +2908,13 @@ mod tests {
     }
 
     #[test]
+    fn macos_bundle_explains_downloads_folder_access() {
+        let info_plist = include_str!("../Info.plist");
+        assert!(info_plist.contains("NSDownloadsFolderUsageDescription"));
+        assert!(info_plist.contains("moves items from Downloads to the Trash"));
+    }
+
+    #[test]
     fn native_preferences_use_appkit_without_dropping_existing_features() {
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("@interface SBNativePreferencesController"));
@@ -3015,6 +3070,7 @@ mod tests {
     fn distinguishes_actions_from_settings_destinations() {
         assert_eq!(control_mode("screenSaver"), "action");
         assert_eq!(control_mode("emptyTrash"), "action");
+        assert_eq!(control_mode("clearDownloads"), "action");
         assert_eq!(control_mode("quitApps"), "action");
         assert_eq!(control_mode("resolution"), "choice");
     }
@@ -3058,6 +3114,7 @@ mod tests {
     fn rejects_unknown_system_settings_destinations() {
         assert!(system_settings_url("accessibility").is_some());
         assert!(system_settings_url("automation").is_some());
+        assert!(system_settings_url("filesAndFolders").is_some());
         assert!(system_settings_url("unknown").is_none());
     }
 

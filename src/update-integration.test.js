@@ -15,6 +15,7 @@ const workflow = await readFile(
   'utf8',
 );
 const bridge = await readFile(new URL('./nativeBridge.js', import.meta.url), 'utf8');
+const app = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
 
 test('release builds create signed updater artifacts from GitHub Releases', () => {
   assert.equal(config.bundle.createUpdaterArtifacts, true);
@@ -49,4 +50,13 @@ test('the native bridge checks, installs, and relaunches through official Tauri 
   assert.match(bridge, /return check\(\)/);
   assert.match(bridge, /import\('@tauri-apps\/plugin-process'\)/);
   assert.match(bridge, /await relaunch\(\)/);
+});
+
+test('checks quietly in the background and keeps manual installation user initiated', () => {
+  assert.match(app, /updateCheckIsDue\(localStorage\.getItem\(storageKey\)\)/);
+  assert.match(app, /checkForAppUpdate\(\{ manual: false \}\)/);
+  assert.match(app, /setTimeout\([\s\S]*2500/);
+  assert.match(app, /action === 'updateInstall'[\s\S]*installPendingAppUpdate\(\)/);
+  assert.match(app, /await update\.downloadAndInstall/);
+  assert.match(app, /await relaunchNativeApp\(\)/);
 });

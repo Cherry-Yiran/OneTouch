@@ -141,9 +141,11 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @property(nonatomic, strong) NSDictionary *model;
 @property(nonatomic, strong) NSMutableArray<SBNativeControlTarget *> *controlTargets;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *rowBindings;
+@property(nonatomic, strong) NSDictionary *headerBindings;
 @property(nonatomic, copy) NSString *layoutSignature;
 @property(nonatomic, strong) NSView *contentHostView;
 - (void)applyModel:(NSDictionary *)model;
+- (void)updateHeader:(NSDictionary *)model;
 @end
 
 @interface SBNativePreferencesController
@@ -161,12 +163,14 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @property(nonatomic, strong) NSTextField *shortcutHint;
 @property(nonatomic, strong) NSTextField *aboutVersion;
 @property(nonatomic, strong) NSButton *aboutGitHubButton;
+@property(nonatomic, strong) NSButton *aboutXButton;
 @property(nonatomic, strong) NSButton *aboutUpdateButton;
 @property(nonatomic, strong) NSTextField *aboutUpdateStatus;
 @property(nonatomic, strong) id shortcutMonitor;
 @property(nonatomic, copy) NSString *recordingShortcutID;
 - (void)applyModel:(NSDictionary *)model;
 - (void)openAboutGitHub:(id)sender;
+- (void)openAboutX:(id)sender;
 - (void)checkForUpdates:(id)sender;
 - (void)updatePreferencesWindowTitle;
 - (void)resizeWindowForSelectedTabAnimated:(BOOL)animated;
@@ -1082,6 +1086,18 @@ static const CGFloat SBNativeSideInset = 16.0;
 static const CGFloat SBNativeControlColumnWidth = 64.0;
 static const CGFloat SBNativeFooterIconButtonWidth = 44.0;
 static const CGFloat SBNativeFooterButtonHeight = 32.0;
+static const CGFloat SBNativeAnnouncementHeight = 60.0;
+static const CGFloat SBNativeExpandedAnnouncementHeight = 112.0;
+
+static CGFloat SBNativeAnnouncementHeightForModel(NSDictionary *model) {
+    NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
+        ? model[@"announcement"]
+        : nil;
+    if (announcement == nil) return 0.0;
+    return [announcement[@"expanded"] boolValue]
+        ? SBNativeExpandedAnnouncementHeight
+        : SBNativeAnnouncementHeight;
+}
 
 static void SBPositionNativePopoverPanel(void) {
     NSButton *button = SBStatusItem.button;
@@ -1222,7 +1238,8 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 
 - (NSView *)headerView:(NSDictionary *)model {
     NSView *header = [NSView new];
-    [header.heightAnchor constraintEqualToConstant:SBNativeHeaderHeight].active = YES;
+    CGFloat announcementHeight = SBNativeAnnouncementHeightForModel(model);
+    [header.heightAnchor constraintEqualToConstant:SBNativeHeaderHeight + announcementHeight].active = YES;
 
     NSImageView *mark = [[NSImageView alloc] initWithFrame:NSZeroRect];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1246,14 +1263,133 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 
     [NSLayoutConstraint activateConstraints:@[
         [mark.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:SBNativeSideInset],
-        [mark.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [mark.centerYAnchor constraintEqualToAnchor:header.topAnchor
+                                            constant:SBNativeHeaderHeight / 2.0],
         [mark.widthAnchor constraintEqualToConstant:28.0],
         [mark.heightAnchor constraintEqualToConstant:28.0],
         [copy.leadingAnchor constraintEqualToAnchor:mark.trailingAnchor constant:10.0],
         [copy.trailingAnchor constraintLessThanOrEqualToAnchor:header.trailingAnchor constant:-14.0],
-        [copy.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [copy.centerYAnchor constraintEqualToAnchor:mark.centerYAnchor],
     ]];
+
+    NSMutableDictionary *bindings = [@{
+        @"title": title,
+        @"subtitle": subtitle,
+    } mutableCopy];
+    NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
+        ? model[@"announcement"]
+        : nil;
+    if (announcement != nil) {
+        BOOL expanded = [announcement[@"expanded"] boolValue];
+        NSView *notice = [NSView new];
+        notice.translatesAutoresizingMaskIntoConstraints = NO;
+        [header addSubview:notice];
+
+        NSTextField *noticeTitle = SBLabel(
+            announcement[@"title"],
+            [NSFont systemFontOfSize:13.0 weight:NSFontWeightMedium],
+            [announcement[@"error"] boolValue] ? NSColor.systemRedColor : NSColor.labelColor);
+        NSTextField *noticeMessage = expanded
+            ? [NSTextField wrappingLabelWithString:announcement[@"message"] ?: @""]
+            : SBLabel(announcement[@"message"],
+                      [NSFont systemFontOfSize:NSFont.smallSystemFontSize
+                                       weight:NSFontWeightRegular],
+                      NSColor.secondaryLabelColor);
+        noticeMessage.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize
+                                               weight:NSFontWeightRegular];
+        noticeMessage.textColor = NSColor.secondaryLabelColor;
+        noticeMessage.maximumNumberOfLines = expanded ? 4 : 1;
+        noticeTitle.translatesAutoresizingMaskIntoConstraints = NO;
+        noticeMessage.translatesAutoresizingMaskIntoConstraints = NO;
+        [notice addSubview:noticeTitle];
+        [notice addSubview:noticeMessage];
+
+        NSButton *noticeButton = [NSButton buttonWithTitle:announcement[@"actionLabel"] ?: @""
+                                                     target:nil
+                                                     action:nil];
+        noticeButton.translatesAutoresizingMaskIntoConstraints = NO;
+        noticeButton.bezelStyle = NSBezelStyleRounded;
+        noticeButton.controlSize = NSControlSizeSmall;
+        noticeButton.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightRegular];
+        SBNativeControlTarget *target = [SBNativeControlTarget new];
+        target.actionName = announcement[@"action"] ?: @"";
+        target.controlID = @"";
+        target.control = noticeButton;
+        noticeButton.target = target;
+        noticeButton.action = @selector(performControlAction:);
+        [self.controlTargets addObject:target];
+        [notice addSubview:noticeButton];
+
+        NSProgressIndicator *progress = [NSProgressIndicator new];
+        progress.translatesAutoresizingMaskIntoConstraints = NO;
+        progress.style = NSProgressIndicatorStyleSpinning;
+        progress.controlSize = NSControlSizeSmall;
+        progress.displayedWhenStopped = NO;
+        [notice addSubview:progress];
+
+        NSMutableArray<NSLayoutConstraint *> *noticeConstraints = [@[
+            [notice.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
+            [notice.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+            [notice.topAnchor constraintEqualToAnchor:header.topAnchor constant:SBNativeHeaderHeight],
+            [notice.bottomAnchor constraintEqualToAnchor:header.bottomAnchor],
+            [noticeTitle.leadingAnchor constraintEqualToAnchor:notice.leadingAnchor constant:SBNativeSideInset],
+            [noticeTitle.topAnchor constraintEqualToAnchor:notice.topAnchor constant:expanded ? 10.0 : 12.0],
+            [noticeTitle.trailingAnchor constraintLessThanOrEqualToAnchor:noticeButton.leadingAnchor constant:-10.0],
+            [noticeMessage.leadingAnchor constraintEqualToAnchor:noticeTitle.leadingAnchor],
+            [noticeMessage.topAnchor constraintEqualToAnchor:noticeTitle.bottomAnchor constant:3.0],
+            [noticeMessage.bottomAnchor constraintLessThanOrEqualToAnchor:notice.bottomAnchor constant:-8.0],
+            [noticeButton.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor constant:-SBNativeSideInset],
+            [noticeButton.topAnchor constraintEqualToAnchor:notice.topAnchor constant:expanded ? 8.0 : 14.0],
+            [progress.centerXAnchor constraintEqualToAnchor:noticeButton.centerXAnchor],
+            [progress.centerYAnchor constraintEqualToAnchor:noticeButton.centerYAnchor],
+        ] mutableCopy];
+        [noticeConstraints addObject:expanded
+            ? [noticeMessage.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor
+                                                         constant:-SBNativeSideInset]
+            : [noticeMessage.trailingAnchor constraintLessThanOrEqualToAnchor:noticeButton.leadingAnchor
+                                                                  constant:-10.0]];
+        [NSLayoutConstraint activateConstraints:noticeConstraints];
+
+        bindings[@"noticeTitle"] = noticeTitle;
+        bindings[@"noticeMessage"] = noticeMessage;
+        bindings[@"noticeButton"] = noticeButton;
+        bindings[@"noticeProgress"] = progress;
+        bindings[@"noticeTarget"] = target;
+    }
+    self.headerBindings = bindings;
+    [self updateHeader:model];
     return header;
+}
+
+- (void)updateHeader:(NSDictionary *)model {
+    if (self.headerBindings == nil) return;
+    NSTextField *title = self.headerBindings[@"title"];
+    NSTextField *subtitle = self.headerBindings[@"subtitle"];
+    title.stringValue = model[@"title"] ?: @"";
+    subtitle.stringValue = model[@"subtitle"] ?: @"";
+
+    NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
+        ? model[@"announcement"]
+        : nil;
+    NSTextField *noticeTitle = self.headerBindings[@"noticeTitle"];
+    if (announcement == nil || noticeTitle == nil) return;
+    NSTextField *noticeMessage = self.headerBindings[@"noticeMessage"];
+    NSButton *noticeButton = self.headerBindings[@"noticeButton"];
+    NSProgressIndicator *progress = self.headerBindings[@"noticeProgress"];
+    SBNativeControlTarget *target = self.headerBindings[@"noticeTarget"];
+    noticeTitle.stringValue = announcement[@"title"] ?: @"";
+    noticeTitle.textColor = [announcement[@"error"] boolValue]
+        ? NSColor.systemRedColor
+        : NSColor.labelColor;
+    noticeMessage.stringValue = announcement[@"message"] ?: @"";
+    NSString *actionLabel = announcement[@"actionLabel"] ?: @"";
+    BOOL busy = [announcement[@"busy"] boolValue];
+    noticeButton.title = actionLabel;
+    noticeButton.hidden = busy || actionLabel.length == 0;
+    noticeButton.enabled = !busy;
+    target.actionName = announcement[@"action"] ?: @"";
+    if (busy) [progress startAnimation:nil];
+    else [progress stopAnimation:nil];
 }
 
 - (NSView *)groupSeparatorView {
@@ -1448,6 +1584,12 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 - (NSString *)layoutSignatureForModel:(NSDictionary *)model {
     NSArray *rows = [model[@"rows"] isKindOfClass:NSArray.class] ? model[@"rows"] : @[];
     NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithObject:model[@"language"] ?: @""];
+    NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
+        ? model[@"announcement"]
+        : nil;
+    [parts addObject:[NSString stringWithFormat:@"announcement:%@:%d",
+                      announcement[@"kind"] ?: @"none",
+                      [announcement[@"expanded"] boolValue] ? 1 : 0]];
     for (NSDictionary *row in rows) {
         [parts addObject:[NSString stringWithFormat:@"%@:%@",
                           row[@"id"] ?: @"", row[@"kind"] ?: @"toggle"]];
@@ -1525,6 +1667,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     }
     if (canUpdateInPlace) {
         self.model = model;
+        [self updateHeader:model];
         BOOL useChinese = [model[@"language"] isEqualToString:@"zh"];
         for (NSDictionary *row in rows) {
             [self updateRow:row
@@ -1542,6 +1685,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSView *rootView = self.contentHostView ?: self.view;
     [self.controlTargets removeAllObjects];
     [self.rowBindings removeAllObjects];
+    self.headerBindings = nil;
 
     BOOL useChinese = [model[@"language"] isEqualToString:@"zh"];
     NSMutableArray<NSView *> *rowViews = [NSMutableArray arrayWithCapacity:rows.count];
@@ -1972,8 +2116,13 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.orientation = NSUserInterfaceLayoutOrientationVertical;
     stack.alignment = NSLayoutAttributeCenterX;
-    stack.spacing = 8.0;
+    stack.spacing = 14.0;
     [root addSubview:stack];
+
+    NSStackView *identityStack = [NSStackView new];
+    identityStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    identityStack.alignment = NSLayoutAttributeCenterX;
+    identityStack.spacing = 4.0;
 
     NSImageView *mark = [NSImageView new];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1990,11 +2139,23 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
                                                 action:@selector(openAboutGitHub:)];
     self.aboutGitHubButton.bezelStyle = NSBezelStyleAccessoryBarAction;
     self.aboutGitHubButton.controlSize = NSControlSizeSmall;
-    self.aboutGitHubButton.image = SBSymbol(@"arrow.up.right.square", 11.0,
-                                            NSFontWeightRegular);
-    self.aboutGitHubButton.imagePosition = NSImageTrailing;
     self.aboutGitHubButton.showsBorderOnlyWhileMouseInside = YES;
     self.aboutGitHubButton.enabled = NO;
+    self.aboutXButton = [NSButton buttonWithTitle:strings[@"x"] ?: @"X"
+                                           target:self
+                                           action:@selector(openAboutX:)];
+    self.aboutXButton.bezelStyle = NSBezelStyleAccessoryBarAction;
+    self.aboutXButton.controlSize = NSControlSizeSmall;
+    self.aboutXButton.showsBorderOnlyWhileMouseInside = YES;
+    self.aboutXButton.enabled = NO;
+
+    NSStackView *socialStack = [NSStackView stackViewWithViews:@[
+        self.aboutGitHubButton, self.aboutXButton
+    ]];
+    socialStack.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    socialStack.alignment = NSLayoutAttributeCenterY;
+    socialStack.spacing = 12.0;
+
     self.aboutUpdateButton = [NSButton buttonWithTitle:strings[@"checkForUpdates"] ?: @"Check for Updates…"
                                                  target:self
                                                  action:@selector(checkForUpdates:)];
@@ -2004,14 +2165,24 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.aboutUpdateStatus.alignment = NSTextAlignmentCenter;
     self.aboutUpdateStatus.hidden = YES;
     [self.aboutUpdateStatus.widthAnchor constraintLessThanOrEqualToConstant:320.0].active = YES;
-    for (NSView *view in @[mark, title, self.aboutVersion, self.aboutUpdateButton,
-                           self.aboutUpdateStatus, self.aboutGitHubButton]) {
-        [stack addArrangedSubview:view];
+
+    NSStackView *updateStack = [NSStackView stackViewWithViews:@[
+        self.aboutUpdateButton, self.aboutUpdateStatus
+    ]];
+    updateStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    updateStack.alignment = NSLayoutAttributeCenterX;
+    updateStack.spacing = 6.0;
+
+    for (NSView *view in @[mark, title, self.aboutVersion]) {
+        [identityStack addArrangedSubview:view];
     }
+    [stack addArrangedSubview:identityStack];
+    [stack addArrangedSubview:updateStack];
+    [stack addArrangedSubview:socialStack];
 
     [NSLayoutConstraint activateConstraints:@[
         [stack.centerXAnchor constraintEqualToAnchor:root.centerXAnchor],
-        [stack.centerYAnchor constraintEqualToAnchor:root.centerYAnchor constant:-18.0],
+        [stack.centerYAnchor constraintEqualToAnchor:root.centerYAnchor constant:-10.0],
     ]];
     return controller;
 }
@@ -2033,6 +2204,18 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     (void)sender;
     NSString *urlString = [self.model[@"githubURL"] isKindOfClass:NSString.class]
         ? self.model[@"githubURL"]
+        : @"";
+    NSURL *url = [NSURL URLWithString:urlString];
+    NSString *scheme = url.scheme.lowercaseString;
+    if (url == nil ||
+        !([scheme isEqualToString:@"https"] || [scheme isEqualToString:@"http"])) return;
+    [NSWorkspace.sharedWorkspace openURL:url];
+}
+
+- (void)openAboutX:(id)sender {
+    (void)sender;
+    NSString *urlString = [self.model[@"xURL"] isKindOfClass:NSString.class]
+        ? self.model[@"xURL"]
         : @"";
     NSURL *url = [NSURL URLWithString:urlString];
     NSString *scheme = url.scheme.lowercaseString;
@@ -2160,6 +2343,13 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.aboutGitHubButton.toolTip = githubURL.length > 0
         ? (self.strings[@"github"] ?: @"GitHub")
         : (self.strings[@"githubPending"] ?: @"GitHub link coming soon");
+    NSString *xURL = [model[@"xURL"] isKindOfClass:NSString.class]
+        ? model[@"xURL"]
+        : @"";
+    self.aboutXButton.enabled = xURL.length > 0;
+    self.aboutXButton.toolTip = xURL.length > 0
+        ? (self.strings[@"x"] ?: @"X")
+        : (self.strings[@"xPending"] ?: @"X link coming soon");
     NSDictionary *update = [model[@"update"] isKindOfClass:NSDictionary.class]
         ? model[@"update"]
         : @{};
@@ -2173,8 +2363,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         ? update[@"status"]
         : @"";
     self.aboutUpdateButton.title = updateTitle;
-    self.aboutUpdateButton.enabled = ![@[@"checking", @"downloading", @"installing", @"restarting"]
-        containsObject:phase];
+    self.aboutUpdateButton.enabled =
+        ![update[@"disabled"] boolValue] &&
+        ![@[@"checking", @"downloading", @"installing", @"restarting"] containsObject:phase];
     self.aboutUpdateStatus.stringValue = updateStatus;
     self.aboutUpdateStatus.hidden = updateStatus.length == 0;
     [self updatePreferencesWindowTitle];
@@ -2639,6 +2830,7 @@ int sb_native_popover_update_json(const char *model_json) {
             : @[];
         NSUInteger visibleRows = MIN(rows.count, SBNativeVisibleRowCapacity);
         CGFloat height = SBNativeHeaderHeight +
+                         SBNativeAnnouncementHeightForModel(model) +
                          visibleRows * SBNativeRowHeight +
                          SBNativeFooterHeight +
                          2.0 * SBNativeSeparatorHeight;
@@ -2777,6 +2969,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
         [controller applyModel:@{
             @"language": @"zh",
             @"githubURL": @"",
+            @"xURL": @"",
             @"update": @{ @"phase": @"idle", @"title": @"检查更新…", @"status": @"" },
             @"startAtLogin": @NO,
             @"startAtLoginLoading": @YES,
@@ -2805,6 +2998,8 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
                 @"version": @"版本 %@",
                 @"github": @"GitHub",
                 @"githubPending": @"GitHub 链接稍后添加",
+                @"x": @"X @hizhm1",
+                @"xPending": @"X 链接稍后添加",
                 @"checkForUpdates": @"检查更新…",
             },
         }];
@@ -3183,6 +3378,62 @@ int sb_quit_nonessential_apps(int *requested_count, char **error_output) {
         return -1;
     }
     return 0;
+}
+
+int sb_trash_downloads(int *moved_count, char **error_output) {
+    @autoreleasepool {
+        NSFileManager *fileManager = NSFileManager.defaultManager;
+        NSURL *downloadsURL =
+            [fileManager URLsForDirectory:NSDownloadsDirectory
+                                inDomains:NSUserDomainMask].firstObject;
+        if (downloadsURL == nil) {
+            SBCopyError(error_output, @"macOS could not locate the Downloads folder");
+            return -1;
+        }
+
+        NSError *listingError = nil;
+        NSArray<NSURL *> *items =
+            [fileManager contentsOfDirectoryAtURL:downloadsURL
+                       includingPropertiesForKeys:nil
+                                          options:0
+                                            error:&listingError];
+        if (items == nil) {
+            SBCopyError(error_output,
+                        listingError.code == NSFileReadNoPermissionError
+                            ? @"Downloads folder access is required"
+                            : listingError.localizedDescription);
+            return -1;
+        }
+
+        NSInteger moved = 0;
+        NSSet<NSString *> *preservedMetadata =
+            [NSSet setWithObjects:@".localized", @".DS_Store", nil];
+        for (NSURL *itemURL in items) {
+            if ([preservedMetadata containsObject:itemURL.lastPathComponent]) continue;
+
+            NSError *trashError = nil;
+            if (![fileManager trashItemAtURL:itemURL
+                            resultingItemURL:nil
+                                       error:&trashError]) {
+                NSString *message = moved == 0
+                    ? [NSString stringWithFormat:@"macOS could not move %@ to Trash: %@",
+                                                 itemURL.lastPathComponent,
+                                                 trashError.localizedDescription]
+                    : [NSString stringWithFormat:
+                        @"Moved %ld item(s), but macOS could not move %@ to Trash: %@",
+                        (long)moved,
+                        itemURL.lastPathComponent,
+                        trashError.localizedDescription];
+                SBCopyError(error_output, message);
+                if (moved_count != NULL) *moved_count = (int)moved;
+                return -1;
+            }
+            moved += 1;
+        }
+
+        if (moved_count != NULL) *moved_count = (int)moved;
+        return 0;
+    }
 }
 
 static void SBResetFeatureStatus(SBFeatureStatus *status) {

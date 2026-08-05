@@ -1,7 +1,7 @@
 {
   "name": "onetouch-macos",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
@@ -10,7 +10,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "native:dev": "tauri dev",
-    "native:build": "tauri build"
+    "native:build": "tauri build",
+    "native:build:beta": "tauri build --bundles app --config src-tauri/tauri.beta.conf.json"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

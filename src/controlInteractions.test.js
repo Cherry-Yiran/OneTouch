@@ -19,6 +19,7 @@ test('classifies persistent controls as toggles', () => {
 test('classifies one-time operations as actions', () => {
   assert.equal(controlKind('screenSaver'), CONTROL_KINDS.ACTION);
   assert.equal(controlKind('emptyTrash'), CONTROL_KINDS.ACTION);
+  assert.equal(controlKind('clearDownloads'), CONTROL_KINDS.ACTION);
   assert.equal(controlKind('quitApps'), CONTROL_KINDS.ACTION);
 });
 
@@ -40,7 +41,7 @@ test('classifies direct system selections as choices', () => {
 });
 
 test('one-time actions use the same direct switch interaction', () => {
-  for (const id of ['xcodeClean', 'emptyTrash', 'ejectDisk', 'clipboard']) {
+  for (const id of ['xcodeClean', 'emptyTrash', 'clearDownloads', 'ejectDisk', 'clipboard']) {
     assert.equal(controlKind(id), CONTROL_KINDS.ACTION);
     assert.equal(usesSwitchAffordance(controlKind(id)), true);
   }
@@ -73,4 +74,6 @@ test('the app never gates a one-time switch behind a second confirmation click',
   assert.match(appSource, /正在处理中…/);
   assert.match(appSource, /trash-already-empty/);
   assert.match(appSource, /垃圾桶已经空了/);
+  assert.match(appSource, /downloads-already-empty/);
+  assert.match(appSource, /下载文件夹已经空了/);
 });

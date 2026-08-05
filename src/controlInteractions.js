@@ -10,6 +10,7 @@ const ACTION_CONTROL_IDS = new Set([
   'frontApp',
   'xcodeClean',
   'emptyTrash',
+  'clearDownloads',
   'ejectDisk',
   'clipboard',
   'hideWindow',

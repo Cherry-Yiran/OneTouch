@@ -10,5 +10,7 @@
   <string>OneTouch uses macOS automation only when you operate a control that needs System Events.</string>
   <key>NSFocusStatusUsageDescription</key>
   <string>OneTouch reads Focus status so its menu bar switch always matches the current macOS Focus mode.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>OneTouch moves items from Downloads to the Trash only when you activate the Clear Downloads control.</string>
 </dict>
 </plist>

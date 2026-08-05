@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OneTouch Beta",
+  "version": "0.3.3",
+  "identifier": "design.ryan.onetouch.beta",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "shortDescription": "OneTouch local testing build"
+  }
+}

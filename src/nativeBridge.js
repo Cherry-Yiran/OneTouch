@@ -141,6 +141,18 @@ export async function getNativeAppVersion() {
   return getVersion();
 }
 
+export async function getNativeAppName() {
+  if (!isTauri()) return 'OneTouch';
+  const { getName } = await import('@tauri-apps/api/app');
+  return getName();
+}
+
+export async function getNativeAppIdentifier() {
+  if (!isTauri()) return 'design.ryan.onetouch.preview';
+  const { getIdentifier } = await import('@tauri-apps/api/app');
+  return getIdentifier();
+}
+
 export async function checkNativeAppUpdate() {
   if (!isTauri()) return null;
   const { check } = await import('@tauri-apps/plugin-updater');
