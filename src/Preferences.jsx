@@ -95,7 +95,7 @@ export const PREFERENCES_COPY = {
     githubPending: 'GitHub link coming soon',
     x: 'X @hizhm1',
     xPending: 'X link coming soon',
-    checkForUpdates: 'Check for Updates…',
+    checkForUpdates: 'Check for Updates',
     checkingForUpdates: 'Checking…',
     updateAvailable: 'Version %s is available.',
     downloadAndInstall: 'Download and Install',
@@ -108,6 +108,7 @@ export const PREFERENCES_COPY = {
     updateReadyNote: 'OneTouch will restart automatically after installation.',
     betaUpdateTitle: 'Beta build',
     betaUpdateStatus: 'Beta builds do not install formal release updates.',
+    newFeature: 'New feature',
   },
   zh: {
     title: '偏好设置',
@@ -150,7 +151,7 @@ export const PREFERENCES_COPY = {
     githubPending: 'GitHub 链接稍后添加',
     x: 'X @hizhm1',
     xPending: 'X 链接稍后添加',
-    checkForUpdates: '检查更新…',
+    checkForUpdates: '检查更新',
     checkingForUpdates: '正在检查…',
     updateAvailable: '发现新版本 %s。',
     downloadAndInstall: '下载并安装',
@@ -163,6 +164,7 @@ export const PREFERENCES_COPY = {
     updateReadyNote: '安装完成后 OneTouch 会自动重新启动。',
     betaUpdateTitle: 'Beta 测试版',
     betaUpdateStatus: '测试版不会安装正式版更新。',
+    newFeature: '新功能',
   },
 };
 
@@ -297,6 +299,7 @@ function SortableControlRow({
   item,
   title,
   visible,
+  isNew,
   copy,
   reducedMotion,
   onVisibilityClick,
@@ -345,7 +348,7 @@ function SortableControlRow({
       </button>
       <Icon size={21} strokeWidth={1.7} />
       <span className="custom-row-copy">
-        <strong>{title}</strong>
+        <strong>{title}{isNew && <span className="new-feature-dot is-inline" aria-label={copy.newFeature} />}</strong>
         <small>{copy[`control${item.kind[0].toUpperCase()}${item.kind.slice(1)}`]}</small>
       </span>
       <button
@@ -391,6 +394,7 @@ export default function Preferences({
   initialTab = 'general',
   appName = 'OneTouch',
   appVersion = '',
+  newFeatureIds = [],
   onClose,
 }) {
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -591,6 +595,7 @@ export default function Preferences({
                           item={item}
                           title={title}
                           visible={visible}
+                          isNew={newFeatureIds.includes(item.id)}
                           copy={copy}
                           reducedMotion={reducedMotion}
                           onVisibilityClick={handleVisibilityClick}

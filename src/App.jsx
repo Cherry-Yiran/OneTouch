@@ -55,9 +55,11 @@ import {
   clearNativeGlobalShortcuts,
   hideNativeWindow,
   isNativeApp,
+  installNativeAppUpdate,
   listenForNativeCustomization,
   listenForNativePopoverActions,
   listenForNativePreferencesActions,
+  listenForNativeUpdateProgress,
   openNativePreferences,
   openNativeSystemSettings,
   quitNativeApp,
@@ -80,9 +82,9 @@ import {
 } from './nativeBridge.js';
 import { recoveryPaneForError } from './nativeErrors.js';
 import {
-  RELEASE_NOTES,
-  RELEASE_NOTES_VERSION,
-  shouldPresentReleaseNotes,
+  NEW_FEATURE_IDS,
+  NEW_FEATURES_VERSION,
+  shouldShowNewFeatureBadges,
   updateCheckIsDue,
 } from './releaseNotes.js';
 import { displayResolutionSummary, primaryDisplay } from './resolutionModel.js';
@@ -163,6 +165,7 @@ const NON_TOGGLE_CONTROL_IDS = SWITCHES
 const MIN_ACTION_PROGRESS_MS = 650;
 const COMPLETION_FEEDBACK_MS = 1400;
 const SECONDARY_PANEL_EXIT_MS = 100;
+const NATIVE_LISTENER_RETRY_MS = 500;
 const GITHUB_URL = 'https://github.com/Cherry-Yiran/OneTouch';
 const X_URL = 'https://x.com/hizhm1';
 const TIMER_POPOVER_WIDTH = 178;
@@ -356,7 +359,8 @@ function localiseNativeError(error, language, text) {
   if (/Focus status permission/i.test(message)) return '需要允许读取专注状态';
   if (/Downloads folder access is required/i.test(message)) return '需要允许 OneTouch 访问下载文件夹';
   if (/could not locate the Downloads folder/i.test(message)) return '无法找到下载文件夹';
-  if (/Moved \d+ item\(s\).*could not move/i.test(message)) return '部分内容已移到废纸篓，但仍有文件无法处理';
+  const partiallyMovedDownloads = message.match(/Moved (\d+) item\(s\).*could not move/i);
+  if (partiallyMovedDownloads) return `已移动 ${partiallyMovedDownloads[1]} 项，但仍有文件无法处理`;
   if (/could not move .* to Trash/i.test(message)) return '无法将下载文件夹中的内容移到废纸篓';
   if (/not supported by the active display/i.test(message)) return '当前显示器不支持此功能';
   if (/unavailable for the active display/i.test(message)) return '当前显示器无法使用此功能';
@@ -374,6 +378,31 @@ function localiseNativeError(error, language, text) {
   if (/(display|resolution).*(could not|rejected|did not reach)/i.test(message)) return 'macOS 未能切换到所选分辨率，请重试';
   if (/timed out|did not respond/i.test(message)) return 'macOS 响应超时，请稍后重试';
   return message || text.unavailable;
+}
+
+function listenWithRetry(register, handler, onReady = () => {}) {
+  let disposed = false;
+  let unlisten = () => {};
+  let retryTimer = 0;
+
+  const connect = () => {
+    register(handler).then((stopListening) => {
+      if (disposed) stopListening();
+      else {
+        unlisten = stopListening;
+        onReady();
+      }
+    }).catch(() => {
+      if (!disposed) retryTimer = window.setTimeout(connect, NATIVE_LISTENER_RETRY_MS);
+    });
+  };
+
+  connect();
+  return () => {
+    disposed = true;
+    window.clearTimeout(retryTimer);
+    unlisten();
+  };
 }
 
 function audioDeviceDescription(snapshot, language, text) {
@@ -423,8 +452,9 @@ export default function App() {
   const [nativePreferencesMessage, setNativePreferencesMessage] = useState('');
   const [nativePreferencesMessageError, setNativePreferencesMessageError] = useState(false);
   const [nativeUpdate, setNativeUpdate] = useState({ phase: 'idle', version: '', progress: null });
-  const [whatsNewVisible, setWhatsNewVisible] = useState(false);
-  const [whatsNewExpanded, setWhatsNewExpanded] = useState(false);
+  const [nativePopoverActionsReady, setNativePopoverActionsReady] = useState(false);
+  const [hasUnseenFeatures, setHasUnseenFeatures] = useState(false);
+  const [featureDiscoveryIds, setFeatureDiscoveryIds] = useState([]);
   const [pendingActionIds, setPendingActionIds] = useState(() => new Set());
   const [completedActionIds, setCompletedActionIds] = useState(() => new Set());
   const [actionResultMessages, setActionResultMessages] = useState({});
@@ -447,11 +477,12 @@ export default function App() {
   const [externalDisks, setExternalDisks] = useState([]);
   const [externalDisksLoading, setExternalDisksLoading] = useState(false);
   const [externalDisksError, setExternalDisksError] = useState('');
-  const [savingDiskName, setSavingDiskName] = useState('');
+  const [savingDiskId, setSavingDiskId] = useState('');
   const shortcutActionRef = useRef(null);
   const nativePopoverActionRef = useRef(null);
   const nativePreferencesActionRef = useRef(null);
   const pendingNativeUpdateRef = useRef(null);
+  const nativeSnapshotRequestRef = useRef(null);
   const timerRearmAttemptedRef = useRef(new Set());
   const secondaryCloseTimerRef = useRef(null);
   const secondaryClosingRef = useRef(null);
@@ -556,9 +587,8 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!appVersion) return;
-    const seenVersion = localStorage.getItem('onetouch-whats-new-seen-version') || '';
-    setWhatsNewVisible(shouldPresentReleaseNotes(appVersion, seenVersion));
-    setWhatsNewExpanded(false);
+    const seenVersion = localStorage.getItem('onetouch-new-features-seen-version') || '';
+    setHasUnseenFeatures(shouldShowNewFeatureBadges(appVersion, seenVersion));
   }, [appVersion]);
   useEffect(() => {
     if (!nativeApp || nativeView !== 'popover' || !appIdentifier || isBetaBuild) return undefined;
@@ -575,10 +605,7 @@ export default function App() {
   }, [nativeView, orderedIds, shortcuts, visibleIds]);
   useEffect(() => {
     if (nativeView !== 'popover') return undefined;
-    let disposed = false;
-    let unlisten = () => {};
-
-    listenForNativeCustomization((customization) => {
+    return listenWithRetry(listenForNativeCustomization, (customization) => {
       if (!customization || typeof customization !== 'object') return;
       if (Array.isArray(customization.visibleIds)) {
         const nextVisibleIds = clampVisibleControlIds(
@@ -594,46 +621,45 @@ export default function App() {
         const nextShortcuts = restoreShortcuts(customization.shortcuts, ALL_SWITCH_IDS);
         setShortcuts((current) => sameShortcutMap(current, nextShortcuts) ? current : nextShortcuts);
       }
-    }).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    }).catch(() => undefined);
-
-    return () => {
-      disposed = true;
-      unlisten();
-    };
+    });
   }, [nativeView]);
 
   useEffect(() => {
     if (!nativeApp || nativeView !== 'popover') return undefined;
-    let disposed = false;
-    let unlisten = () => {};
-    listenForNativePopoverActions((payload) => {
-      nativePopoverActionRef.current?.(payload);
-    }).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    }).catch(() => undefined);
-    return () => {
-      disposed = true;
-      unlisten();
-    };
+    setNativePopoverActionsReady(false);
+    return listenWithRetry(
+      listenForNativePopoverActions,
+      (payload) => nativePopoverActionRef.current?.(payload),
+      () => setNativePopoverActionsReady(true),
+    );
   }, [nativeApp, nativeView]);
   useEffect(() => {
+    if (!nativeApp) return undefined;
+    return listenWithRetry(listenForNativeUpdateProgress, ({
+      phase,
+      chunkLength = 0,
+      contentLength = null,
+    } = {}) => {
+      if (phase === 'installing') {
+        setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
+        return;
+      }
+      if (phase !== 'downloading') return;
+      setNativeUpdate((current) => {
+        const downloaded = (current.downloaded || 0) + chunkLength;
+        const progress = contentLength
+          ? Math.min(100, Math.round((downloaded / contentLength) * 100))
+          : null;
+        return { ...current, phase: 'downloading', downloaded, progress };
+      });
+    });
+  }, [nativeApp]);
+  useEffect(() => {
     if (!nativeApp || nativeView !== 'popover') return undefined;
-    let disposed = false;
-    let unlisten = () => {};
-    listenForNativePreferencesActions((payload) => {
-      nativePreferencesActionRef.current?.(payload);
-    }).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    }).catch(() => undefined);
-    return () => {
-      disposed = true;
-      unlisten();
-    };
+    return listenWithRetry(
+      listenForNativePreferencesActions,
+      (payload) => nativePreferencesActionRef.current?.(payload),
+    );
   }, [nativeApp, nativeView]);
   useEffect(() => {
     if (!nativeApp || !['popover', 'preferences'].includes(nativeView)) return undefined;
@@ -665,19 +691,25 @@ export default function App() {
   }, [pendingResolutionMode, resolutionPanelOpen, closingSecondaryPanel]);
   const refreshNativeSnapshot = async () => {
     if (!nativeApp) return null;
-    const snapshot = await getNativeSnapshot();
-    if (!snapshot) return null;
-    setNativeControls(snapshot.controls || {});
-    setNativeSnapshotReady(true);
-    setAudioDeviceState(snapshot.audioDevice || null);
-    setSwitches((current) => {
-      const next = { ...current };
-      Object.entries(snapshot.controls || {}).forEach(([id, control]) => {
-        if (control.stateKnown !== false) next[id] = Boolean(control.state);
+    if (nativeSnapshotRequestRef.current) return nativeSnapshotRequestRef.current;
+    const request = getNativeSnapshot().then((snapshot) => {
+      if (!snapshot) return null;
+      setNativeControls(snapshot.controls || {});
+      setNativeSnapshotReady(true);
+      setAudioDeviceState(snapshot.audioDevice || null);
+      setSwitches((current) => {
+        const next = { ...current };
+        Object.entries(snapshot.controls || {}).forEach(([id, control]) => {
+          if (control.stateKnown !== false) next[id] = Boolean(control.state);
+        });
+        return next;
       });
-      return next;
+      return snapshot;
+    }).finally(() => {
+      if (nativeSnapshotRequestRef.current === request) nativeSnapshotRequestRef.current = null;
     });
-    return snapshot;
+    nativeSnapshotRequestRef.current = request;
+    return request;
   };
 
   useEffect(() => {
@@ -1047,23 +1079,23 @@ export default function App() {
   };
 
   const toggleDiskExclusion = async (disk) => {
-    if (savingDiskName) return;
+    if (savingDiskId) return;
     const previous = externalDisks;
     const next = externalDisks.map((item) => (
       item.id === disk.id ? { ...item, excluded: !item.excluded } : item
     ));
     setExternalDisks(next);
-    setSavingDiskName(disk.name);
+    setSavingDiskId(disk.id);
     setExternalDisksError('');
     try {
       await setNativeEjectExclusions(
-        next.filter((item) => item.excluded).map((item) => item.name),
+        next.filter((item) => item.excluded).map((item) => item.id),
       );
     } catch (error) {
       setExternalDisks(previous);
       setExternalDisksError(localiseNativeError(error, language, text));
     } finally {
-      setSavingDiskName('');
+      setSavingDiskId('');
     }
   };
 
@@ -1132,24 +1164,14 @@ export default function App() {
       await checkForAppUpdate({ manual: true });
       return;
     }
-    let downloaded = 0;
-    let contentLength = null;
-    setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
+    setNativeUpdate((current) => ({
+      ...current,
+      phase: 'downloading',
+      downloaded: 0,
+      progress: 0,
+    }));
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === 'Started') {
-          contentLength = event.data.contentLength || null;
-          setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress: 0 }));
-        } else if (event.event === 'Progress') {
-          downloaded += event.data.chunkLength;
-          const progress = contentLength
-            ? Math.min(100, Math.round((downloaded / contentLength) * 100))
-            : null;
-          setNativeUpdate((current) => ({ ...current, phase: 'downloading', progress }));
-        } else if (event.event === 'Finished') {
-          setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
-        }
-      });
+      await installNativeAppUpdate();
       setNativeUpdate((current) => ({ ...current, phase: 'restarting', progress: 100 }));
       await relaunchNativeApp();
     } catch {
@@ -1204,6 +1226,10 @@ export default function App() {
         return;
       }
       await checkForAppUpdate({ manual: true });
+      return;
+    }
+    if (action === 'closed') {
+      setFeatureDiscoveryIds([]);
       return;
     }
     if (action === 'visibility' && ALL_SWITCH_IDS.includes(controlId)) {
@@ -1265,6 +1291,15 @@ export default function App() {
   };
 
   const openPreferences = async (pane = 'general') => {
+    if (pane === 'customise') {
+      if (hasUnseenFeatures) {
+        setFeatureDiscoveryIds([...NEW_FEATURE_IDS]);
+        localStorage.setItem('onetouch-new-features-seen-version', NEW_FEATURES_VERSION);
+        setHasUnseenFeatures(false);
+      } else {
+        setFeatureDiscoveryIds([]);
+      }
+    }
     if (nativeView === 'popover' && await openNativePreferences(pane)) return;
     setIsOpen(false);
     setPreferencesInitialTab(pane);
@@ -1299,16 +1334,6 @@ export default function App() {
     }
     if (action === 'updateRetry') {
       await checkForAppUpdate({ manual: true });
-      return;
-    }
-    if (action === 'whatsNewExpand') {
-      setWhatsNewExpanded(true);
-      return;
-    }
-    if (action === 'whatsNewDismiss') {
-      localStorage.setItem('onetouch-whats-new-seen-version', RELEASE_NOTES_VERSION);
-      setWhatsNewVisible(false);
-      setWhatsNewExpanded(false);
       return;
     }
     if (!ALL_SWITCH_IDS.includes(controlId)) return;
@@ -1397,17 +1422,8 @@ export default function App() {
         expanded: false,
       };
     }
-    if (!whatsNewVisible) return null;
-    const releaseCopy = RELEASE_NOTES[language];
-    return {
-      kind: 'whatsNew',
-      title: releaseCopy.title.replace('%s', appVersion),
-      message: whatsNewExpanded ? releaseCopy.items.join('\n') : releaseCopy.summary,
-      actionLabel: whatsNewExpanded ? releaseCopy.done : releaseCopy.view,
-      action: whatsNewExpanded ? 'whatsNewDismiss' : 'whatsNewExpand',
-      expanded: whatsNewExpanded,
-    };
-  }, [appVersion, language, nativeUpdate, whatsNewExpanded, whatsNewVisible]);
+    return null;
+  }, [language, nativeUpdate]);
 
   const nativePopoverModel = useMemo(() => ({
     language,
@@ -1415,6 +1431,8 @@ export default function App() {
     subtitle: text.subtitle,
     settingsLabel: text.settings,
     customiseLabel: text.customise,
+    newFeatureLabel: PREFERENCES_COPY[language].newFeature,
+    showCustomiseBadge: hasUnseenFeatures,
     quitLabel: text.quit,
     announcement: nativeAnnouncement,
     rows: menuItems.map((item) => {
@@ -1485,6 +1503,7 @@ export default function App() {
     actionResultMessages,
     completedActionIds,
     currentResolutionSummary,
+    hasUnseenFeatures,
     language,
     menuItems,
     nativeAnnouncement,
@@ -1499,21 +1518,21 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!nativeApp || nativeView !== 'popover') return;
+    if (!nativeApp || nativeView !== 'popover' || !nativePopoverActionsReady) return;
     updateNativePopover(nativePopoverModel).catch(() => undefined);
-  }, [nativeApp, nativePopoverModel, nativeView]);
+  }, [nativeApp, nativePopoverActionsReady, nativePopoverModel, nativeView]);
 
   const accessibilityGuideModel = useMemo(() => ({
     ...ACCESSIBILITY_GUIDE_COPY[language],
     appName,
     language,
-    autoShow: true,
+    autoShow: false,
   }), [appName, language]);
 
   useEffect(() => {
-    if (!nativeApp || nativeView !== 'popover') return;
+    if (!nativeApp || nativeView !== 'popover' || !appIdentifier) return;
     updateNativeAccessibilityGuide(accessibilityGuideModel).catch(() => undefined);
-  }, [accessibilityGuideModel, nativeApp, nativeView]);
+  }, [accessibilityGuideModel, appIdentifier, nativeApp, nativeView]);
 
   const nativePreferencesModel = useMemo(() => {
     const copy = {
@@ -1572,12 +1591,17 @@ export default function App() {
           visible: visibleIds.includes(id),
           shortcut: shortcuts[id] || '',
           shortcutDisplay: formatShortcut(shortcuts[id] || ''),
+          newFeature: (featureDiscoveryIds.length > 0
+            ? featureDiscoveryIds
+            : hasUnseenFeatures ? NEW_FEATURE_IDS : []).includes(id),
         };
       }),
     };
   }, [
     appName,
     appVersion,
+    featureDiscoveryIds,
+    hasUnseenFeatures,
     isBetaBuild,
     language,
     nativePreferencesMessage,
@@ -1613,11 +1637,18 @@ export default function App() {
       onStartAtLoginChange={updateStartAtLogin}
       shortcuts={shortcuts}
       setShortcuts={setShortcuts}
+      newFeatureIds={featureDiscoveryIds.length > 0
+        ? featureDiscoveryIds
+        : hasUnseenFeatures ? NEW_FEATURE_IDS : []}
       nativeTitlebar={nativeView === 'preferences'}
       initialTab={preferencesInitialTab}
       appName={appName}
       appVersion={appVersion}
-      onClose={nativeView === 'preferences' ? hideNativeWindow : () => setPreferencesOpen(false)}
+      onClose={() => {
+        setFeatureDiscoveryIds([]);
+        if (nativeView === 'preferences') hideNativeWindow();
+        else setPreferencesOpen(false);
+      }}
     />
   );
 
@@ -1691,7 +1722,7 @@ export default function App() {
           : <RowAction pending={pending} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} label={controlLabel} />;
         return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
       })}</div>
-      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
+      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}{hasUnseenFeatures && <span className="new-feature-dot" aria-hidden="true" />}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
       {resolutionPanelOpen && (
         <ResolutionPanel
           copy={text}
@@ -1724,10 +1755,10 @@ export default function App() {
           copy={text}
           loading={externalDisksLoading}
           error={externalDisksError}
-          savingName={savingDiskName}
+          savingId={savingDiskId}
           closing={closingSecondaryPanel === 'disk'}
           onClose={() => {
-            if (!savingDiskName) closeSecondaryPanel('disk');
+            if (!savingDiskId) closeSecondaryPanel('disk');
           }}
           onRetry={loadExternalDisks}
           onToggle={toggleDiskExclusion}
@@ -1756,7 +1787,7 @@ export default function App() {
 
         {isOpen && popover}
 
-        {preferencesOpen && <><button type="button" className="preferences-scrim" aria-label="Close preferences window" onClick={() => setPreferencesOpen(false)} />{preferences}</>}
+        {preferencesOpen && <><button type="button" className="preferences-scrim" aria-label="Close preferences window" onClick={() => { setFeatureDiscoveryIds([]); setPreferencesOpen(false); }} />{preferences}</>}
         <div className="stage-caption"><Languages size={14} /> {language === 'zh' ? '状态栏应用原型 · 点击右上角图标展开' : 'STATUS BAR APP PREVIEW · CLICK THE TOP-RIGHT ICON'}</div>
       </div>
     </main>

@@ -69,7 +69,7 @@ OneTouch 当前提供 **30 个控制项**。不支持的硬件能力或未安装
 
 当前公开测试版支持 **Apple Silicon Mac**，要求 **macOS 13 或更高版本**。
 
-公开构建使用固定的 OneTouch 自签名证书和独立的 Tauri 更新签名，但暂未接入 Apple Developer ID 公证。首次打开时，可能需要前往“系统设置 → 隐私与安全性”手动允许。安装后可在“关于”页面检查、下载并安装新版本。
+公开构建使用固定的 OneTouch macOS 签名证书，并通过独立的 Tauri 更新签名校验；任一步签名验证失败，GitHub Actions 都不会公开 Release。由于没有走 Apple Developer ID 公证，首次打开时 macOS 仍可能要求前往“系统设置 → 隐私与安全性”手动允许。安装后可在“关于”页面检查、下载并安装新版本。
 
 ## 使用说明
 
@@ -118,7 +118,7 @@ TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-key-password" \
 pnpm native:build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`。推送 `v*` 标签会通过 GitHub Actions 创建 Release，并上传 DMG、自动更新包、签名和 `latest.json`。
+构建产物位于 `src-tauri/target/release/bundle/`。推送 `v*` 标签会通过 GitHub Actions 创建草稿 Release，使用 `APPLE_CERTIFICATE` 与 `APPLE_SIGNING_IDENTITY` 完成固定身份签名，并使用 Tauri 私钥签署更新包；校验通过后才会公开并上传 DMG、自动更新包、签名和 `latest.json`。
 
 ## 设计与实现
 

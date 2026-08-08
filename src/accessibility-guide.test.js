@@ -8,6 +8,12 @@ const helper = await readFile(
   new URL('../src-tauri/src/macos_helper.m', import.meta.url),
   'utf8',
 );
+const rust = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+const rustProduction = rust.split('#[cfg(test)]')[0];
+const entitlements = await readFile(
+  new URL('../src-tauri/Entitlements.plist', import.meta.url),
+  'utf8',
+);
 const tauriConfig = JSON.parse(
   await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
 );
@@ -30,8 +36,16 @@ test('ships bilingual native Accessibility guide copy', () => {
   assert.match(app, /不会记录或上传键盘内容/);
   assert.match(app, /Quit OneTouch/);
   assert.match(app, /退出 OneTouch/);
-  assert.match(app, /autoShow: true/);
+  assert.match(app, /autoShow: false/);
+  assert.doesNotMatch(app, /onetouch-accessibility-onboarding-seen/);
+  assert.match(app, /nativeView !== 'popover' \|\| !appIdentifier/);
   assert.match(app, /updateNativeAccessibilityGuide\(accessibilityGuideModel\)/);
+});
+
+test('never interrupts launch with Accessibility onboarding', () => {
+  assert.match(app, /autoShow: false/);
+  assert.doesNotMatch(app, /setItem\('onetouch-accessibility-onboarding-seen'/);
+  assert.match(app, /pane === 'accessibility'.*showNativeAccessibilityGuide\(\)/s);
 });
 
 test('routes Accessibility recovery through the native guide', () => {
@@ -39,6 +53,20 @@ test('routes Accessibility recovery through the native guide', () => {
   assert.match(app, /showNativeAccessibilityGuide\(\)/);
   assert.match(bridge, /invoke\('update_accessibility_guide'/);
   assert.match(bridge, /invoke\('show_accessibility_guide'/);
+});
+
+test('opens the menu without Accessibility and limits recovery to controls that need it', () => {
+  assert.doesNotMatch(rustProduction, /fn require_accessibility_or_show_guide/);
+  assert.doesNotMatch(rustProduction, /Accessibility permission is required to use OneTouch/);
+  assert.match(rustProduction, /error\.to_ascii_lowercase\(\)\.contains\("accessibility permission"\)/);
+  assert.match(helper, /Accessibility permission is required for keyboard cleaning/);
+  assert.match(helper, /Accessibility permission is required to change Focus/);
+});
+
+test('declares the Hardened Runtime entitlement required for Apple Events', () => {
+  assert.equal(tauriConfig.bundle.macOS.entitlements, 'Entitlements.plist');
+  assert.match(entitlements, /com\.apple\.security\.automation\.apple-events/);
+  assert.match(entitlements, /<true\/>/);
 });
 
 test('uses the app bundle URL and the official explicit Accessibility prompt', () => {

@@ -54,15 +54,35 @@ test('an open detail panel removes the underlying controls from keyboard navigat
   });
 });
 
-test('native update and whats-new notices preserve the fixed control rows', () => {
+test('native update notices preserve the fixed control rows without release announcements', () => {
   assert.match(macosHelper, /SBNativeAnnouncementHeight\s*=\s*60\.0/);
   assert.match(macosHelper, /SBNativeExpandedAnnouncementHeight\s*=\s*112\.0/);
   assert.match(macosHelper, /noticeButton\.bezelStyle = NSBezelStyleRounded/);
   assert.match(macosHelper, /progress\.style = NSProgressIndicatorStyleSpinning/);
   assert.match(macosHelper, /\[self updateHeader:model\]/);
   assert.match(macosHelper, /SBNativeAnnouncementHeightForModel\(model\)/);
+  assert.match(macosHelper, /headerHeightConstraint\.constant = SBNativeHeaderHeight/);
+  assert.match(macosHelper, /noticeMessage\.maximumNumberOfLines = expanded \? 4 : 1/);
+  assert.doesNotMatch(
+    macosHelper,
+    /announcement:%@:%d[\s\S]*announcement\[@"expanded"\]/,
+  );
   assert.match(app, /action === 'updateInstall'/);
-  assert.match(app, /action === 'whatsNewExpand'/);
-  assert.match(app, /action === 'whatsNewDismiss'/);
+  assert.doesNotMatch(app, /whatsNewExpand|whatsNewDismiss|已更新至|Updated to/);
   assert.match(app, /announcement: nativeAnnouncement/);
+  assert.match(app, /!nativePopoverActionsReady\) return/);
+  assert.match(app, /setNativePopoverActionsReady\(true\)/);
+});
+
+test('new features use native system badges and clear the entry badge after customise opens', () => {
+  assert.match(macosHelper, /SBSymbol\(@"circle\.fill", 7\.0/);
+  assert.match(macosHelper, /badge\.contentTintColor = NSColor\.systemRedColor/);
+  assert.match(macosHelper, /model\[@"showCustomiseBadge"\]/);
+  assert.match(macosHelper, /row\[@"newFeature"\]/);
+  assert.match(macosHelper, /newFeatureBadge\.leadingAnchor constraintEqualToAnchor:title\.trailingAnchor constant:6\.0/);
+  assert.match(macosHelper, /newFeatureBadge\.trailingAnchor constraintLessThanOrEqualToAnchor:handle\.leadingAnchor/);
+  assert.match(macosHelper, /SBEmitNativePreferencesAction\(@"closed"/);
+  assert.match(app, /setHasUnseenFeatures\(false\)/);
+  assert.match(app, /action === 'closed'/);
+  assert.match(app, /onetouch-new-features-seen-version/);
 });
