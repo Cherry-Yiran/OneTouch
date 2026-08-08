@@ -157,10 +157,15 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @property(nonatomic, strong) NSSearchField *customSearchField;
 @property(nonatomic, strong) NSSearchField *shortcutSearchField;
 @property(nonatomic, strong) NSPopUpButton *languagePopup;
+@property(nonatomic, strong) NSTextField *languageLabel;
+@property(nonatomic, strong) NSTextField *loginLabel;
 @property(nonatomic, strong) NSSwitch *loginSwitch;
 @property(nonatomic, strong) NSTextField *loginNote;
+@property(nonatomic, strong) NSTextField *customiseIntroLabel;
 @property(nonatomic, strong) NSTextField *visibleCountLabel;
+@property(nonatomic, strong) NSTextField *shortcutIntroLabel;
 @property(nonatomic, strong) NSTextField *shortcutHint;
+@property(nonatomic, strong) NSTextField *aboutTitleLabel;
 @property(nonatomic, strong) NSTextField *aboutVersion;
 @property(nonatomic, strong) NSButton *aboutGitHubButton;
 @property(nonatomic, strong) NSButton *aboutXButton;
@@ -434,6 +439,18 @@ static NSImage *SBSymbol(NSString *name, CGFloat size, NSFontWeight weight) {
         return [image imageWithSymbolConfiguration:configuration];
     }
     return nil;
+}
+
+static NSImageView *SBNewFeatureBadgeView(NSString *toolTip) {
+    NSImageView *badge = [NSImageView new];
+    badge.translatesAutoresizingMaskIntoConstraints = NO;
+    badge.image = SBSymbol(@"circle.fill", 7.0, NSFontWeightRegular);
+    badge.imageScaling = NSImageScaleProportionallyDown;
+    badge.contentTintColor = NSColor.systemRedColor;
+    badge.toolTip = toolTip;
+    [badge.widthAnchor constraintEqualToConstant:7.0].active = YES;
+    [badge.heightAnchor constraintEqualToConstant:7.0].active = YES;
+    return badge;
 }
 
 static NSURL *SBAccessibilityApplicationURL(void) {
@@ -1239,7 +1256,9 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 - (NSView *)headerView:(NSDictionary *)model {
     NSView *header = [NSView new];
     CGFloat announcementHeight = SBNativeAnnouncementHeightForModel(model);
-    [header.heightAnchor constraintEqualToConstant:SBNativeHeaderHeight + announcementHeight].active = YES;
+    NSLayoutConstraint *headerHeightConstraint =
+        [header.heightAnchor constraintEqualToConstant:SBNativeHeaderHeight + announcementHeight];
+    headerHeightConstraint.active = YES;
 
     NSImageView *mark = [[NSImageView alloc] initWithFrame:NSZeroRect];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1275,6 +1294,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSMutableDictionary *bindings = [@{
         @"title": title,
         @"subtitle": subtitle,
+        @"headerHeightConstraint": headerHeightConstraint,
     } mutableCopy];
     NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
         ? model[@"announcement"]
@@ -1289,16 +1309,15 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
             announcement[@"title"],
             [NSFont systemFontOfSize:13.0 weight:NSFontWeightMedium],
             [announcement[@"error"] boolValue] ? NSColor.systemRedColor : NSColor.labelColor);
-        NSTextField *noticeMessage = expanded
-            ? [NSTextField wrappingLabelWithString:announcement[@"message"] ?: @""]
-            : SBLabel(announcement[@"message"],
-                      [NSFont systemFontOfSize:NSFont.smallSystemFontSize
-                                       weight:NSFontWeightRegular],
-                      NSColor.secondaryLabelColor);
+        NSTextField *noticeMessage =
+            [NSTextField wrappingLabelWithString:announcement[@"message"] ?: @""];
         noticeMessage.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize
                                                weight:NSFontWeightRegular];
         noticeMessage.textColor = NSColor.secondaryLabelColor;
         noticeMessage.maximumNumberOfLines = expanded ? 4 : 1;
+        noticeMessage.lineBreakMode = expanded
+            ? NSLineBreakByWordWrapping
+            : NSLineBreakByTruncatingTail;
         noticeTitle.translatesAutoresizingMaskIntoConstraints = NO;
         noticeMessage.translatesAutoresizingMaskIntoConstraints = NO;
         [notice addSubview:noticeTitle];
@@ -1327,34 +1346,46 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         progress.displayedWhenStopped = NO;
         [notice addSubview:progress];
 
-        NSMutableArray<NSLayoutConstraint *> *noticeConstraints = [@[
+        NSLayoutConstraint *noticeTitleTopConstraint =
+            [noticeTitle.topAnchor constraintEqualToAnchor:notice.topAnchor
+                                                  constant:expanded ? 10.0 : 12.0];
+        NSLayoutConstraint *noticeButtonTopConstraint =
+            [noticeButton.topAnchor constraintEqualToAnchor:notice.topAnchor
+                                                   constant:expanded ? 8.0 : 14.0];
+        NSLayoutConstraint *collapsedMessageTrailingConstraint =
+            [noticeMessage.trailingAnchor constraintLessThanOrEqualToAnchor:noticeButton.leadingAnchor
+                                                                       constant:-10.0];
+        NSLayoutConstraint *expandedMessageTrailingConstraint =
+            [noticeMessage.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor
+                                                          constant:-SBNativeSideInset];
+        [NSLayoutConstraint activateConstraints:@[
             [notice.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
             [notice.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
             [notice.topAnchor constraintEqualToAnchor:header.topAnchor constant:SBNativeHeaderHeight],
             [notice.bottomAnchor constraintEqualToAnchor:header.bottomAnchor],
             [noticeTitle.leadingAnchor constraintEqualToAnchor:notice.leadingAnchor constant:SBNativeSideInset],
-            [noticeTitle.topAnchor constraintEqualToAnchor:notice.topAnchor constant:expanded ? 10.0 : 12.0],
+            noticeTitleTopConstraint,
             [noticeTitle.trailingAnchor constraintLessThanOrEqualToAnchor:noticeButton.leadingAnchor constant:-10.0],
             [noticeMessage.leadingAnchor constraintEqualToAnchor:noticeTitle.leadingAnchor],
             [noticeMessage.topAnchor constraintEqualToAnchor:noticeTitle.bottomAnchor constant:3.0],
             [noticeMessage.bottomAnchor constraintLessThanOrEqualToAnchor:notice.bottomAnchor constant:-8.0],
             [noticeButton.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor constant:-SBNativeSideInset],
-            [noticeButton.topAnchor constraintEqualToAnchor:notice.topAnchor constant:expanded ? 8.0 : 14.0],
+            noticeButtonTopConstraint,
             [progress.centerXAnchor constraintEqualToAnchor:noticeButton.centerXAnchor],
             [progress.centerYAnchor constraintEqualToAnchor:noticeButton.centerYAnchor],
-        ] mutableCopy];
-        [noticeConstraints addObject:expanded
-            ? [noticeMessage.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor
-                                                         constant:-SBNativeSideInset]
-            : [noticeMessage.trailingAnchor constraintLessThanOrEqualToAnchor:noticeButton.leadingAnchor
-                                                                  constant:-10.0]];
-        [NSLayoutConstraint activateConstraints:noticeConstraints];
+        ]];
+        collapsedMessageTrailingConstraint.active = !expanded;
+        expandedMessageTrailingConstraint.active = expanded;
 
         bindings[@"noticeTitle"] = noticeTitle;
         bindings[@"noticeMessage"] = noticeMessage;
         bindings[@"noticeButton"] = noticeButton;
         bindings[@"noticeProgress"] = progress;
         bindings[@"noticeTarget"] = target;
+        bindings[@"noticeTitleTopConstraint"] = noticeTitleTopConstraint;
+        bindings[@"noticeButtonTopConstraint"] = noticeButtonTopConstraint;
+        bindings[@"collapsedMessageTrailingConstraint"] = collapsedMessageTrailingConstraint;
+        bindings[@"expandedMessageTrailingConstraint"] = expandedMessageTrailingConstraint;
     }
     self.headerBindings = bindings;
     [self updateHeader:model];
@@ -1377,6 +1408,32 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSButton *noticeButton = self.headerBindings[@"noticeButton"];
     NSProgressIndicator *progress = self.headerBindings[@"noticeProgress"];
     SBNativeControlTarget *target = self.headerBindings[@"noticeTarget"];
+    BOOL expanded = [announcement[@"expanded"] boolValue];
+    NSLayoutConstraint *headerHeightConstraint =
+        self.headerBindings[@"headerHeightConstraint"];
+    NSLayoutConstraint *noticeTitleTopConstraint =
+        self.headerBindings[@"noticeTitleTopConstraint"];
+    NSLayoutConstraint *noticeButtonTopConstraint =
+        self.headerBindings[@"noticeButtonTopConstraint"];
+    NSLayoutConstraint *collapsedMessageTrailingConstraint =
+        self.headerBindings[@"collapsedMessageTrailingConstraint"];
+    NSLayoutConstraint *expandedMessageTrailingConstraint =
+        self.headerBindings[@"expandedMessageTrailingConstraint"];
+    headerHeightConstraint.constant = SBNativeHeaderHeight +
+        SBNativeAnnouncementHeightForModel(model);
+    noticeTitleTopConstraint.constant = expanded ? 10.0 : 12.0;
+    noticeButtonTopConstraint.constant = expanded ? 8.0 : 14.0;
+    noticeMessage.maximumNumberOfLines = expanded ? 4 : 1;
+    noticeMessage.lineBreakMode = expanded
+        ? NSLineBreakByWordWrapping
+        : NSLineBreakByTruncatingTail;
+    if (expanded) {
+        collapsedMessageTrailingConstraint.active = NO;
+        expandedMessageTrailingConstraint.active = YES;
+    } else {
+        expandedMessageTrailingConstraint.active = NO;
+        collapsedMessageTrailingConstraint.active = YES;
+    }
     noticeTitle.stringValue = announcement[@"title"] ?: @"";
     noticeTitle.textColor = [announcement[@"error"] boolValue]
         ? NSColor.systemRedColor
@@ -1531,6 +1588,11 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     customise.controlSize = NSControlSizeRegular;
     customise.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular];
 
+    NSImageView *customiseBadge = nil;
+    if ([model[@"showCustomiseBadge"] boolValue]) {
+        customiseBadge = SBNewFeatureBadgeView(model[@"newFeatureLabel"] ?: @"New feature");
+    }
+
     NSButton *quit = [[NSButton alloc] initWithFrame:NSZeroRect];
     quit.image = SBSymbol(@"power", 16.0, NSFontWeightRegular);
     quit.imagePosition = NSImageOnly;
@@ -1564,6 +1626,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         button.translatesAutoresizingMaskIntoConstraints = NO;
         [footer addSubview:button];
     }
+    if (customiseBadge != nil) [footer addSubview:customiseBadge];
     [NSLayoutConstraint activateConstraints:@[
         [settings.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor constant:SBNativeSideInset],
         [settings.centerYAnchor constraintEqualToAnchor:footer.centerYAnchor],
@@ -1578,6 +1641,13 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         [quit.widthAnchor constraintEqualToConstant:SBNativeFooterIconButtonWidth],
         [quit.heightAnchor constraintEqualToConstant:SBNativeFooterButtonHeight],
     ]];
+    if (customiseBadge != nil) {
+        [NSLayoutConstraint activateConstraints:@[
+            [customiseBadge.trailingAnchor constraintEqualToAnchor:customise.trailingAnchor
+                                                             constant:-8.0],
+            [customiseBadge.topAnchor constraintEqualToAnchor:customise.topAnchor constant:5.0],
+        ]];
+    }
     return footer;
 }
 
@@ -1587,9 +1657,10 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
         ? model[@"announcement"]
         : nil;
-    [parts addObject:[NSString stringWithFormat:@"announcement:%@:%d",
-                      announcement[@"kind"] ?: @"none",
-                      [announcement[@"expanded"] boolValue] ? 1 : 0]];
+    [parts addObject:[NSString stringWithFormat:@"announcement:%@",
+                      announcement[@"kind"] ?: @"none"]];
+    [parts addObject:[NSString stringWithFormat:@"customiseBadge:%d",
+                      [model[@"showCustomiseBadge"] boolValue] ? 1 : 0]];
     for (NSDictionary *row in rows) {
         [parts addObject:[NSString stringWithFormat:@"%@:%@",
                           row[@"id"] ?: @"", row[@"kind"] ?: @"toggle"]];
@@ -1941,19 +2012,19 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.loginSwitch.target = self;
     self.loginSwitch.action = @selector(loginChanged:);
 
-    NSTextField *languageLabel =
+    self.languageLabel =
         SBPreferencesLabel(strings[@"language"], NSColor.labelColor);
-    NSTextField *loginLabel =
+    self.loginLabel =
         SBPreferencesLabel(strings[@"startAtLogin"], NSColor.labelColor);
-    for (NSTextField *label in @[languageLabel, loginLabel]) {
+    for (NSTextField *label in @[self.languageLabel, self.loginLabel]) {
         label.alignment = NSTextAlignmentRight;
     }
 
     self.loginNote = SBPreferencesSecondaryLabel(strings[@"startAtLoginNote"]);
     NSTextField *emptyLabel = SBPreferencesLabel(@"", NSColor.labelColor);
     NSGridView *grid = [NSGridView gridViewWithViews:@[
-        @[languageLabel, self.languagePopup],
-        @[loginLabel, self.loginSwitch],
+        @[self.languageLabel, self.languagePopup],
+        @[self.loginLabel, self.loginSwitch],
         @[emptyLabel, self.loginNote],
     ]];
     grid.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1993,9 +2064,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     NSView *root = [NSView new];
     controller.view = root;
 
-    NSTextField *lead = SBPreferencesSecondaryLabel(strings[@"customiseIntro"]);
-    lead.translatesAutoresizingMaskIntoConstraints = NO;
-    [root addSubview:lead];
+    self.customiseIntroLabel =
+        SBPreferencesSecondaryLabel(strings[@"customiseIntro"]);
+    self.customiseIntroLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:self.customiseIntroLabel];
 
     self.visibleCountLabel = SBPreferencesLabel(@"", NSColor.secondaryLabelColor);
     self.visibleCountLabel.alignment = NSTextAlignmentRight;
@@ -2024,19 +2096,19 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     [root addSubview:scroll];
 
     [NSLayoutConstraint activateConstraints:@[
-        [lead.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
-                                                     constant:SBNativePreferencesHorizontalInset],
-        [lead.topAnchor constraintEqualToAnchor:root.topAnchor constant:14.0],
-        [lead.trailingAnchor constraintLessThanOrEqualToAnchor:self.visibleCountLabel.leadingAnchor
-                                                      constant:-12.0],
+        [self.customiseIntroLabel.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
+                                                                  constant:SBNativePreferencesHorizontalInset],
+        [self.customiseIntroLabel.topAnchor constraintEqualToAnchor:root.topAnchor constant:14.0],
+        [self.customiseIntroLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.visibleCountLabel.leadingAnchor
+                                                                           constant:-12.0],
         [self.visibleCountLabel.trailingAnchor constraintEqualToAnchor:root.trailingAnchor
                                                                constant:-SBNativePreferencesHorizontalInset],
-        [self.visibleCountLabel.centerYAnchor constraintEqualToAnchor:lead.centerYAnchor],
+        [self.visibleCountLabel.centerYAnchor constraintEqualToAnchor:self.customiseIntroLabel.centerYAnchor],
         [self.customSearchField.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
                                                               constant:SBNativePreferencesHorizontalInset],
         [self.customSearchField.trailingAnchor constraintEqualToAnchor:root.trailingAnchor
                                                                constant:-SBNativePreferencesHorizontalInset],
-        [self.customSearchField.topAnchor constraintEqualToAnchor:lead.bottomAnchor
+        [self.customSearchField.topAnchor constraintEqualToAnchor:self.customiseIntroLabel.bottomAnchor
                                                           constant:8.0],
         [scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
         [scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
@@ -2053,9 +2125,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     NSView *root = [NSView new];
     controller.view = root;
 
-    NSTextField *lead = SBPreferencesSecondaryLabel(strings[@"shortcutIntro"]);
-    lead.translatesAutoresizingMaskIntoConstraints = NO;
-    [root addSubview:lead];
+    self.shortcutIntroLabel =
+        SBPreferencesSecondaryLabel(strings[@"shortcutIntro"]);
+    self.shortcutIntroLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:self.shortcutIntroLabel];
 
     self.shortcutSearchField = [NSSearchField new];
     self.shortcutSearchField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2081,16 +2154,16 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     [root addSubview:self.shortcutHint];
 
     [NSLayoutConstraint activateConstraints:@[
-        [lead.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
-                                                     constant:SBNativePreferencesHorizontalInset],
-        [lead.trailingAnchor constraintEqualToAnchor:root.trailingAnchor
-                                                      constant:-SBNativePreferencesHorizontalInset],
-        [lead.topAnchor constraintEqualToAnchor:root.topAnchor constant:14.0],
+        [self.shortcutIntroLabel.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
+                                                                 constant:SBNativePreferencesHorizontalInset],
+        [self.shortcutIntroLabel.trailingAnchor constraintEqualToAnchor:root.trailingAnchor
+                                                                  constant:-SBNativePreferencesHorizontalInset],
+        [self.shortcutIntroLabel.topAnchor constraintEqualToAnchor:root.topAnchor constant:14.0],
         [self.shortcutSearchField.leadingAnchor constraintEqualToAnchor:root.leadingAnchor
                                                                 constant:SBNativePreferencesHorizontalInset],
         [self.shortcutSearchField.trailingAnchor constraintEqualToAnchor:root.trailingAnchor
                                                                  constant:-SBNativePreferencesHorizontalInset],
-        [self.shortcutSearchField.topAnchor constraintEqualToAnchor:lead.bottomAnchor
+        [self.shortcutSearchField.topAnchor constraintEqualToAnchor:self.shortcutIntroLabel.bottomAnchor
                                                             constant:8.0],
         [scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
         [scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
@@ -2130,9 +2203,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     mark.imageScaling = NSImageScaleProportionallyUpOrDown;
     [mark.widthAnchor constraintEqualToConstant:56.0].active = YES;
     [mark.heightAnchor constraintEqualToConstant:56.0].active = YES;
-    NSTextField *title = SBPreferencesLabel(strings[@"aboutTitle"] ?: @"OneTouch",
-                                            NSColor.labelColor);
-    title.font = [NSFont systemFontOfSize:18.0 weight:NSFontWeightMedium];
+    self.aboutTitleLabel = SBPreferencesLabel(strings[@"aboutTitle"] ?: @"OneTouch",
+                                              NSColor.labelColor);
+    self.aboutTitleLabel.font =
+        [NSFont systemFontOfSize:18.0 weight:NSFontWeightMedium];
     self.aboutVersion = SBPreferencesLabel(@"", NSColor.secondaryLabelColor);
     self.aboutGitHubButton = [NSButton buttonWithTitle:strings[@"github"] ?: @"GitHub"
                                                 target:self
@@ -2156,7 +2230,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     socialStack.alignment = NSLayoutAttributeCenterY;
     socialStack.spacing = 12.0;
 
-    self.aboutUpdateButton = [NSButton buttonWithTitle:strings[@"checkForUpdates"] ?: @"Check for Updates…"
+    self.aboutUpdateButton = [NSButton buttonWithTitle:strings[@"checkForUpdates"] ?: @"Check for Updates"
                                                  target:self
                                                  action:@selector(checkForUpdates:)];
     self.aboutUpdateButton.bezelStyle = NSBezelStyleRounded;
@@ -2173,7 +2247,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     updateStack.alignment = NSLayoutAttributeCenterX;
     updateStack.spacing = 6.0;
 
-    for (NSView *view in @[mark, title, self.aboutVersion]) {
+    for (NSView *view in @[mark, self.aboutTitleLabel, self.aboutVersion]) {
         [identityStack addArrangedSubview:view];
     }
     [stack addArrangedSubview:identityStack];
@@ -2224,30 +2298,48 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     [NSWorkspace.sharedWorkspace openURL:url];
 }
 
-- (void)rebuildTabs {
-    NSInteger selected = self.tabViewItems.count > 0 ? self.selectedTabViewItemIndex : 0;
-    for (NSTabViewItem *item in self.tabViewItems.copy) {
-        [self removeTabViewItem:item];
-    }
+- (void)updateTabLabels {
     NSArray<NSString *> *keys = @[@"general", @"customise", @"shortcuts", @"about"];
     NSArray<NSString *> *symbols =
         @[@"gearshape", @"slider.horizontal.3", @"keyboard", @"info.circle"];
+    NSUInteger tabCount = MIN(self.tabViewItems.count, keys.count);
+    for (NSUInteger index = 0; index < tabCount; index += 1) {
+        NSTabViewItem *item = self.tabViewItems[index];
+        item.label = self.strings[keys[index]] ?: keys[index];
+        item.image = SBSymbol(symbols[index], 15.0, NSFontWeightRegular);
+    }
+    [self updatePreferencesWindowTitle];
+}
+
+- (void)buildTabsIfNeeded {
+    if (self.tabViewItems.count > 0) return;
     NSArray<NSViewController *> *controllers = @[
         [self generalController],
         [self customiseController],
         [self shortcutsController],
         [self aboutController],
     ];
-    for (NSUInteger index = 0; index < controllers.count; index += 1) {
+    for (NSViewController *controller in controllers) {
         NSTabViewItem *item =
-            [NSTabViewItem tabViewItemWithViewController:controllers[index]];
-        item.label = self.strings[keys[index]] ?: keys[index];
-        item.image = SBSymbol(symbols[index], 15.0, NSFontWeightRegular);
+            [NSTabViewItem tabViewItemWithViewController:controller];
         [self addTabViewItem:item];
     }
-    self.selectedTabViewItemIndex =
-        MIN(MAX(selected, 0), (NSInteger)self.tabViewItems.count - 1);
-    [self updatePreferencesWindowTitle];
+    [self updateTabLabels];
+}
+
+- (void)updateLocalisedControls {
+    NSDictionary *strings = self.strings;
+    self.languageLabel.stringValue = strings[@"language"] ?: @"";
+    self.loginLabel.stringValue = strings[@"startAtLogin"] ?: @"";
+    self.customiseIntroLabel.stringValue = strings[@"customiseIntro"] ?: @"";
+    self.customSearchField.placeholderString =
+        strings[@"searchControls"] ?: @"Search controls";
+    self.shortcutIntroLabel.stringValue = strings[@"shortcutIntro"] ?: @"";
+    self.shortcutSearchField.placeholderString =
+        strings[@"searchControls"] ?: @"Search controls";
+    self.aboutTitleLabel.stringValue = strings[@"aboutTitle"] ?: @"OneTouch";
+    self.aboutGitHubButton.title = strings[@"github"] ?: @"GitHub";
+    self.aboutXButton.title = strings[@"x"] ?: @"X";
 }
 
 - (void)updateVisibleCount {
@@ -2317,16 +2409,15 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (void)applyModel:(NSDictionary *)model {
     if (![model isKindOfClass:NSDictionary.class]) return;
     NSString *oldLanguage = self.model[@"language"];
-    NSUInteger oldRowCount = self.rows.count;
     self.model = model;
     self.rows = [model[@"rows"] isKindOfClass:NSArray.class] ? model[@"rows"] : @[];
-    BOOL rebuild = self.tabViewItems.count == 0 ||
-                   ![oldLanguage isEqualToString:model[@"language"]] ||
-                   (oldRowCount == 0 && self.rows.count > 0);
-    if (rebuild) {
+    if (self.tabViewItems.count == 0) {
         [self endShortcutRecording];
-        [self rebuildTabs];
+        [self buildTabsIfNeeded];
+    } else if (![oldLanguage isEqualToString:model[@"language"]]) {
+        [self updateTabLabels];
     }
+    [self updateLocalisedControls];
     [self updateGeneralControls];
     [self updateVisibleCount];
     [self.customTable reloadData];
@@ -2358,7 +2449,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         : @"idle";
     NSString *updateTitle = [update[@"title"] isKindOfClass:NSString.class]
         ? update[@"title"]
-        : (self.strings[@"checkForUpdates"] ?: @"Check for Updates…");
+        : (self.strings[@"checkForUpdates"] ?: @"Check for Updates");
     NSString *updateStatus = [update[@"status"] isKindOfClass:NSString.class]
         ? update[@"status"]
         : @"";
@@ -2384,6 +2475,12 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [cell addSubview:title];
 
+    NSImageView *newFeatureBadge = nil;
+    if ([row[@"newFeature"] boolValue]) {
+        newFeatureBadge = SBNewFeatureBadgeView(self.strings[@"newFeature"] ?: @"New feature");
+        [cell addSubview:newFeatureBadge];
+    }
+
     NSImageView *handle = SBPreferencesSymbolView(@"line.3.horizontal");
     handle.contentTintColor = NSColor.tertiaryLabelColor;
     [cell addSubview:handle];
@@ -2404,12 +2501,22 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         [icon.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:8.0],
         [title.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-        [title.trailingAnchor constraintLessThanOrEqualToAnchor:handle.leadingAnchor constant:-8.0],
         [checkbox.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14.0],
         [checkbox.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [handle.trailingAnchor constraintEqualToAnchor:checkbox.leadingAnchor constant:-8.0],
         [handle.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
     ]];
+    if (newFeatureBadge != nil) {
+        [NSLayoutConstraint activateConstraints:@[
+            [newFeatureBadge.leadingAnchor constraintEqualToAnchor:title.trailingAnchor constant:6.0],
+            [newFeatureBadge.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+            [newFeatureBadge.trailingAnchor constraintLessThanOrEqualToAnchor:handle.leadingAnchor
+                                                                     constant:-8.0],
+        ]];
+    } else {
+        [title.trailingAnchor constraintLessThanOrEqualToAnchor:handle.leadingAnchor
+                                                       constant:-8.0].active = YES;
+    }
     return cell;
 }
 
@@ -2653,6 +2760,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 
 - (void)windowWillClose:(NSNotification *)notification {
     [self endShortcutRecording];
+    SBEmitNativePreferencesAction(@"closed", @"", @"");
     SBRestorePreviousApplicationAfterPopover();
 }
 
@@ -2970,7 +3078,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
             @"language": @"zh",
             @"githubURL": @"",
             @"xURL": @"",
-            @"update": @{ @"phase": @"idle", @"title": @"检查更新…", @"status": @"" },
+            @"update": @{ @"phase": @"idle", @"title": @"检查更新", @"status": @"" },
             @"startAtLogin": @NO,
             @"startAtLoginLoading": @YES,
             @"rows": @[],
@@ -3000,7 +3108,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
                 @"githubPending": @"GitHub 链接稍后添加",
                 @"x": @"X @hizhm1",
                 @"xPending": @"X 链接稍后添加",
-                @"checkForUpdates": @"检查更新…",
+                @"checkForUpdates": @"检查更新",
             },
         }];
         if (SBNativePreferencesWindowController.window == nil) result = -1;

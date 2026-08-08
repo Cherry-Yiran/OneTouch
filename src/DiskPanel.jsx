@@ -5,7 +5,7 @@ export default function DiskPanel({
   copy,
   loading,
   error,
-  savingName,
+  savingId,
   closing = false,
   onClose,
   onRetry,
@@ -14,7 +14,7 @@ export default function DiskPanel({
   return (
     <section className={`disk-panel secondary-panel ${closing ? 'is-closing' : ''}`} aria-label={copy.diskPanelTitle}>
       <header className="disk-panel-head">
-        <button className="disk-back" type="button" onClick={onClose} disabled={Boolean(savingName)} aria-label={copy.diskBack}>
+        <button className="disk-back" type="button" onClick={onClose} disabled={Boolean(savingId)} aria-label={copy.diskBack}>
           <ArrowLeft size={18} />
         </button>
         <span>
@@ -40,14 +40,14 @@ export default function DiskPanel({
               type="button"
               role="listitem"
               className={`disk-option ${disk.excluded ? 'is-protected' : ''}`}
-              disabled={Boolean(savingName)}
+              disabled={Boolean(savingId)}
               onClick={() => onToggle(disk)}
             >
               <span>
                 <strong>{disk.name}</strong>
                 <small>{disk.excluded ? copy.diskProtected : copy.diskWillEject}</small>
               </span>
-              <span className={`toggle ${disk.excluded ? 'is-on' : ''} ${savingName === disk.name ? 'is-loading' : ''}`} aria-hidden="true"><span /></span>
+              <span className={`toggle ${disk.excluded ? 'is-on' : ''} ${savingId === disk.id ? 'is-loading' : ''}`} aria-hidden="true"><span /></span>
             </button>
           ))}
         </div>

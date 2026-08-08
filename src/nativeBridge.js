@@ -155,8 +155,19 @@ export async function getNativeAppIdentifier() {
 
 export async function checkNativeAppUpdate() {
   if (!isTauri()) return null;
-  const { check } = await import('@tauri-apps/plugin-updater');
-  return check();
+  return invoke('check_native_app_update');
+}
+
+export async function installNativeAppUpdate() {
+  if (!isTauri()) return false;
+  await invoke('install_native_app_update');
+  return true;
+}
+
+export async function listenForNativeUpdateProgress(handler) {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('native-update-progress', (event) => handler(event.payload));
 }
 
 export async function relaunchNativeApp() {

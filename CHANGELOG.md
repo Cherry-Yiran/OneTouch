@@ -2,6 +2,27 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.4] - 2026-08-08
+
+### 改进
+
+- 主面板不再强制要求辅助功能权限，只有真正依赖辅助功能的控制才会引导授权。
+- Music 与 Spotify 在用户首次主动操作后会继续同步外部播放状态。
+- 合并重复的系统状态读取，并缓存蓝牙耳机电量，减少打开面板时的等待和卡顿。
+- 新功能改用“自定义”入口和功能行红点提示，不再展示更新公告卡片。
+- “检查更新”按钮去掉多余省略号，保持按钮文案简洁。
+
+### 修复
+
+- 补齐 Hardened Runtime 下发送 Apple Events 所需的自动化 entitlement。
+- 修复退出、崩溃或更新重启后 `caffeinate` 可能残留并继续阻止 Mac 休眠的问题。
+- 原生事件监听失败后自动重试，避免按钮或设置入口永久失效。
+- 磁盘保护改用稳定的设备标识，避免同名磁盘互相影响。
+- 限制磁盘与蓝牙状态查询时长，并保留下载清理部分成功的数量提示。
+- 发布流程在固定 macOS 身份和 Tauri 更新包签名均验证通过后才公开 Release。
+- 修复切换语言时顶部标签被依次切换的问题，当前页面和标签选择保持不变。
+- 固定前端依赖版本范围并修复依赖安全告警。
+
 ## [0.3.3] - 2026-08-05
 
 ### 新增
@@ -106,6 +127,7 @@
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
 [0.3.3]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.2...v0.3.3
+[0.3.4]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.3...v0.3.4
 [0.3.2]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.2.0...v0.3.0

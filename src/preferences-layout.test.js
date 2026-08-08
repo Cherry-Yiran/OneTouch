@@ -99,6 +99,28 @@ test('native settings use the system preference toolbar with a visible pane titl
   assert.doesNotMatch(macosHelper, /NSToolbarDisplayModeIconOnly/);
 });
 
+test('changing language updates native tabs in place without cycling the selection', () => {
+  const updateTabLabels = macosHelper.match(
+    /- \(void\)updateTabLabels \{[\s\S]*?\n\}\n\n- \(void\)buildTabsIfNeeded/,
+  )?.[0] ?? '';
+  const buildTabsIfNeeded = macosHelper.match(
+    /- \(void\)buildTabsIfNeeded \{[\s\S]*?\n\}\n\n- \(void\)updateLocalisedControls/,
+  )?.[0] ?? '';
+
+  assert.match(buildTabsIfNeeded, /if \(self\.tabViewItems\.count > 0\) return/);
+  assert.doesNotMatch(
+    `${updateTabLabels}\n${buildTabsIfNeeded}`,
+    /removeTabViewItem|item\.viewController\.view =|selectedTabViewItemIndex\s*=/,
+  );
+  assert.match(updateTabLabels, /NSTabViewItem \*item = self\.tabViewItems\[index\]/);
+  assert.match(
+    macosHelper,
+    /else if \(!\[oldLanguage isEqualToString:model\[@"language"\]\]\) \{\s*\[self updateTabLabels\];/,
+  );
+  assert.match(macosHelper, /- \(void\)updateLocalisedControls[\s\S]*self\.languageLabel\.stringValue/);
+  assert.match(macosHelper, /\[self updateLocalisedControls\];/);
+});
+
 test('brand mark follows the system appearance while active controls use the accent color', () => {
   assert.match(
     macosHelper,
@@ -149,6 +171,7 @@ test('about page groups identity, updating, and native social links', () => {
   assert.match(app, /const X_URL = 'https:\/\/x\.com\/hizhm1'/);
   assert.match(preferences, /x: 'X @hizhm1'/);
   assert.match(app, /githubURL: GITHUB_URL,[\s\S]*xURL: X_URL/);
-  assert.match(nativeBridge, /@tauri-apps\/plugin-updater/);
+  assert.doesNotMatch(nativeBridge, /@tauri-apps\/plugin-updater/);
+  assert.match(nativeBridge, /invoke\('check_native_app_update'\)/);
   assert.match(nativeBridge, /@tauri-apps\/plugin-process/);
 });

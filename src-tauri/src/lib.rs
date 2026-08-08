@@ -5,7 +5,7 @@ use std::{
     fs,
     io::Read,
     os::raw::{c_char, c_int, c_void},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -29,6 +29,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_updater::UpdaterExt;
 
 const ALL_CONTROL_IDS: [&str; 30] = [
     "desktop",
@@ -67,11 +68,43 @@ const ALL_CONTROL_IDS: [&str; 30] = [
 const PREFERENCES_DOMAIN: &str = "design.ryan.switchboard.menubar.v2";
 const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
 const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
+const TRUSTED_UPDATE_EXECUTABLE: &str = "/Applications/OneTouch.app/Contents/MacOS/onetouch";
+const TRUSTED_UPDATE_TEMP_ROOT: &str = "/private/tmp";
 
 #[cfg(target_os = "macos")]
 const LEGACY_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch";
 #[cfg(target_os = "macos")]
 const CURRENT_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch.menubar";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeAppUpdate {
+    version: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeUpdateProgress {
+    phase: &'static str,
+    chunk_length: usize,
+    content_length: Option<u64>,
+}
+
+fn validate_update_executable(executable: &Path) -> Result<(), String> {
+    if executable == Path::new(TRUSTED_UPDATE_EXECUTABLE) {
+        Ok(())
+    } else {
+        Err("For security, updates can only be installed from /Applications/OneTouch.app".into())
+    }
+}
+
+fn trusted_update_executable() -> Result<PathBuf, String> {
+    let executable = env::current_exe()
+        .and_then(fs::canonicalize)
+        .map_err(|error| format!("Unable to verify the OneTouch installation path: {error}"))?;
+    validate_update_executable(&executable)?;
+    Ok(executable)
+}
 
 #[cfg(target_os = "macos")]
 fn copy_directory_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
@@ -378,9 +411,23 @@ struct NativeState {
     previous_input_volume: Mutex<Option<u8>>,
     music_playing: Mutex<Option<bool>>,
     spotify_playing: Mutex<Option<bool>>,
+    audio_device_cache: Mutex<Option<(Instant, AudioDeviceSnapshot)>>,
     airpods_operation: Mutex<()>,
     tray_anchor: Mutex<Option<Rect>>,
     native_menu_active: Mutex<bool>,
+}
+
+impl Drop for NativeState {
+    fn drop(&mut self) {
+        let child = match self.caffeinate.get_mut() {
+            Ok(child) => child,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(mut child) = child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -754,11 +801,22 @@ fn native_audio_device_base_snapshot() -> AudioDeviceSnapshot {
 }
 
 #[cfg(target_os = "macos")]
-fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
+fn native_audio_device_snapshot(state: &NativeState) -> AudioDeviceSnapshot {
     let mut snapshot = native_audio_device_base_snapshot();
 
     if !snapshot.connected {
+        if let Ok(mut cache) = state.audio_device_cache.lock() {
+            *cache = None;
+        }
         return snapshot;
+    }
+
+    if let Ok(cache) = state.audio_device_cache.lock() {
+        if let Some((captured_at, cached)) = cache.as_ref() {
+            if captured_at.elapsed() < Duration::from_secs(30) && cached.name == snapshot.name {
+                return cached.clone();
+            }
+        }
     }
 
     if let Some(output) = read_process_with_timeout(
@@ -778,6 +836,9 @@ fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
             }
         }
     }
+    if let Ok(mut cache) = state.audio_device_cache.lock() {
+        *cache = Some((Instant::now(), snapshot.clone()));
+    }
     snapshot
 }
 
@@ -790,7 +851,7 @@ fn native_audio_device_base_snapshot() -> AudioDeviceSnapshot {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn native_audio_device_snapshot() -> AudioDeviceSnapshot {
+fn native_audio_device_snapshot(_state: &NativeState) -> AudioDeviceSnapshot {
     native_audio_device_base_snapshot()
 }
 
@@ -1013,8 +1074,9 @@ fn set_awake(enabled: bool, state: &NativeState) -> Result<(), String> {
 
     if enabled {
         if caffeinate.is_none() {
+            let owner_pid = std::process::id().to_string();
             let child = Command::new("/usr/bin/caffeinate")
-                .args(["-dimsu"])
+                .args(["-dimsu", "-w", &owner_pid])
                 .spawn()
                 .map_err(|error| format!("Unable to start caffeinate: {error}"))?;
             *caffeinate = Some(child);
@@ -1245,6 +1307,31 @@ fn set_spotify_playing(enabled: bool, state: &NativeState) -> Result<(), String>
     Ok(())
 }
 
+fn refreshed_player_state(
+    cached_state: &Mutex<Option<bool>>,
+    process_name: &str,
+    script: &str,
+) -> Option<bool> {
+    let cached = cached_state.lock().ok().and_then(|state| *state)?;
+    let running = read_process("/usr/bin/pgrep", &["-x", process_name]).is_some();
+    let refreshed = if running {
+        read_process_with_timeout(
+            "/usr/bin/osascript",
+            &["-e", script],
+            Duration::from_secs(2),
+        )
+        .and_then(|value| parse_defaults_bool(&value))
+    } else {
+        Some(false)
+    }
+    .unwrap_or(cached);
+
+    if let Ok(mut state) = cached_state.lock() {
+        *state = Some(refreshed);
+    }
+    Some(refreshed)
+}
+
 fn clean_xcode_derived_data() -> Result<(), String> {
     let home =
         env::var_os("HOME").ok_or_else(|| "The home directory is unavailable".to_string())?;
@@ -1386,18 +1473,18 @@ fn ejectable_disk_list() -> Result<Vec<EjectableDiskCandidate>, String> {
         let path = entry
             .map_err(|error| format!("Unable to inspect a mounted volume: {error}"))?
             .path();
-        let output = Command::new("/usr/sbin/diskutil")
-            .args(["info", "-plist"])
-            .arg(&path)
-            .output()
-            .map_err(|error| format!("Unable to inspect mounted volume: {error}"))?;
+        let path = path.to_string_lossy().into_owned();
+        let Some(output) = read_process_with_timeout(
+            "/usr/sbin/diskutil",
+            &["info", "-plist", &path],
+            Duration::from_secs(3),
+        ) else {
+            continue;
+        };
         // Network shares and special mount points may not be managed by
         // diskutil. Ignore only those entries; a malformed plist is a real
         // detection failure and should remain visible to the user.
-        if !output.status.success() {
-            continue;
-        }
-        let info = plist::from_bytes::<DiskutilVolumeInfo>(&output.stdout)
+        let info = plist::from_bytes::<DiskutilVolumeInfo>(output.as_bytes())
             .map_err(|error| format!("Unable to read mounted volume details: {error}"))?;
         infos.push(info);
     }
@@ -1446,7 +1533,9 @@ fn external_disk_inventory() -> Result<Vec<ExternalDisk>, String> {
     Ok(ejectable_disk_list()?
         .into_iter()
         .map(|disk| ExternalDisk {
-            excluded: exclusions.contains(&disk.name),
+            // Accept legacy name-based exclusions once, then the next save from
+            // the UI migrates them to the stable whole-disk identifier.
+            excluded: exclusions.contains(&disk.id) || exclusions.contains(&disk.name),
             id: disk.id,
             name: disk.name,
         })
@@ -1579,8 +1668,6 @@ fn set_switch_blocking(
 
 #[tauri::command]
 async fn set_switch(id: String, enabled: bool, app: AppHandle) -> Result<SwitchResult, String> {
-    #[cfg(target_os = "macos")]
-    require_accessibility_or_show_guide()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<NativeState>();
         set_switch_blocking(id, enabled, state.inner())
@@ -1588,7 +1675,9 @@ async fn set_switch(id: String, enabled: bool, app: AppHandle) -> Result<SwitchR
     .await
     .map_err(|error| format!("The system operation stopped unexpectedly: {error}"))?;
     #[cfg(target_os = "macos")]
-    if result.is_err() && unsafe { sb_accessibility_is_trusted() } == 0 {
+    if matches!(&result, Err(error) if error.to_ascii_lowercase().contains("accessibility permission"))
+        && unsafe { sb_accessibility_is_trusted() } == 0
+    {
         unsafe {
             sb_native_popover_hide();
             let _ = sb_accessibility_guide_show();
@@ -1653,13 +1742,17 @@ fn native_state_values(
     // Querying Music through AppleScript can block app startup while macOS waits
     // for Automation permission. Treat the state as unknown until the user has
     // explicitly operated this switch during the current app session.
-    let music_state = state.music_playing.lock().ok().and_then(|playing| *playing);
+    let music_state = refreshed_player_state(
+        &state.music_playing,
+        "Music",
+        "tell application \"Music\" to return (player state is playing) as text",
+    );
     values.insert("music".into(), music_state.unwrap_or(false));
-    let spotify_state = state
-        .spotify_playing
-        .lock()
-        .ok()
-        .and_then(|playing| *playing);
+    let spotify_state = refreshed_player_state(
+        &state.spotify_playing,
+        "Spotify",
+        "tell application \"Spotify\" to return (player state is playing) as text",
+    );
     values.insert("spotify".into(), spotify_state.unwrap_or(false));
 
     let awake = state
@@ -1680,7 +1773,7 @@ fn native_state_values(
 }
 
 fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
-    let audio_device = native_audio_device_snapshot();
+    let audio_device = native_audio_device_snapshot(state);
     let external_disks = ejectable_disk_list();
     let (external_disks_available, external_disks_message) =
         external_disk_control_status(&external_disks);
@@ -1865,9 +1958,86 @@ fn hide_current_window(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn check_native_app_update(app: AppHandle) -> Result<Option<NativeAppUpdate>, String> {
+    let update = app
+        .updater()
+        .map_err(|error| format!("Unable to initialize the updater: {error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("Unable to check for updates: {error}"))?;
+    Ok(update.map(|update| NativeAppUpdate {
+        version: update.version,
+    }))
+}
+
+#[tauri::command]
+async fn install_native_app_update(app: AppHandle) -> Result<(), String> {
+    let executable = trusted_update_executable()?;
+    // The locked upstream installer creates a temporary extraction directory and
+    // later includes that path in its privileged macOS fallback. Ignore a launch
+    // environment supplied TMPDIR and force the extraction root to a fixed,
+    // syntax-safe system directory before constructing the guarded updater.
+    env::set_var("TMPDIR", TRUSTED_UPDATE_TEMP_ROOT);
+
+    let updater = app
+        .updater_builder()
+        .executable_path(&executable)
+        .build()
+        .map_err(|error| format!("Unable to initialize the updater: {error}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| format!("Unable to check for updates: {error}"))?
+        .ok_or_else(|| "No newer OneTouch update is available".to_string())?;
+
+    let progress_app = app.clone();
+    let finish_app = app.clone();
+    let bytes = update
+        .download(
+            move |chunk_length, content_length| {
+                let _ = progress_app.emit(
+                    "native-update-progress",
+                    NativeUpdateProgress {
+                        phase: "downloading",
+                        chunk_length,
+                        content_length,
+                    },
+                );
+            },
+            move || {
+                let _ = finish_app.emit(
+                    "native-update-progress",
+                    NativeUpdateProgress {
+                        phase: "installing",
+                        chunk_length: 0,
+                        content_length: None,
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|error| format!("Unable to download the update: {error}"))?;
+
+    // Revalidate immediately before the privileged installation boundary so a
+    // relocated bundle cannot pass an earlier check and then be installed.
+    let current_executable = trusted_update_executable()?;
+    if current_executable != executable {
+        return Err("The OneTouch installation path changed during the update".into());
+    }
+    env::set_var("TMPDIR", TRUSTED_UPDATE_TEMP_ROOT);
+    update
+        .install(bytes)
+        .map_err(|error| format!("Unable to install the update: {error}"))
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle) {
     let _ = set_clean_screen(false);
     let _ = set_keyboard_locked(false);
+    {
+        let state = app.state::<NativeState>();
+        let _ = set_awake(false, state.inner());
+    }
     app.exit(0);
 }
 
@@ -2002,15 +2172,6 @@ fn show_accessibility_guide() -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(target_os = "macos")]
-fn require_accessibility_or_show_guide() -> Result<(), String> {
-    if unsafe { sb_accessibility_is_trusted() } != 0 {
-        return Ok(());
-    }
-    let _ = unsafe { sb_accessibility_guide_show() };
-    Err("Accessibility permission is required to use OneTouch".to_string())
-}
-
 fn position_popover(app: &AppHandle, window: &WebviewWindow, anchor_rect: Option<tauri::Rect>) {
     let Ok(window_size) = window.outer_size() else {
         return;
@@ -2102,7 +2263,6 @@ fn show_popover_with_native_animation(_window: &WebviewWindow) -> bool {
 fn show_popover(app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        require_accessibility_or_show_guide()?;
         let result = unsafe { sb_native_popover_show() };
         if result == 0 {
             if let Ok(mut active) = app.state::<NativeState>().native_menu_active.lock() {
@@ -2128,8 +2288,6 @@ fn show_popover(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn show_legacy_popover(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    require_accessibility_or_show_guide()?;
     #[cfg(target_os = "macos")]
     unsafe {
         sb_native_popover_hide();
@@ -2191,13 +2349,6 @@ extern "C" fn native_status_item_clicked(x: f64, y: f64, width: f64, height: f64
     );
     if let Some(window) = app.get_webview_window("popover") {
         let _ = window.hide();
-    }
-    if unsafe { sb_accessibility_is_trusted() } == 0 {
-        unsafe {
-            sb_native_popover_hide();
-        }
-        let _ = unsafe { sb_accessibility_guide_show() };
-        return;
     }
     // The Objective-C controller always exists before the status item can be
     // clicked. Show its loading model if React has not supplied live state yet;
@@ -2332,6 +2483,8 @@ pub fn run() {
             set_display_mode,
             get_external_disks,
             set_eject_exclusions,
+            check_native_app_update,
+            install_native_app_update,
             open_preferences,
             hide_current_window,
             quit_app,
@@ -2449,7 +2602,11 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building OneTouch")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                let state = app_handle.state::<NativeState>();
+                let _ = set_awake(false, state.inner());
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 let result = unsafe { sb_status_item_ensure_available() };
@@ -2462,14 +2619,31 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
         control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
         find_audio_device_battery, parse_defaults_bool, run_process_with_timeout,
-        snapshot_state_known, system_settings_url, timer_menu_choice, DiskutilVolumeInfo,
-        EjectableDiskCandidate,
+        snapshot_state_known, system_settings_url, timer_menu_choice, validate_update_executable,
+        DiskutilVolumeInfo, EjectableDiskCandidate, TRUSTED_UPDATE_EXECUTABLE,
+        TRUSTED_UPDATE_TEMP_ROOT,
     };
+
+    #[test]
+    fn update_installation_accepts_only_the_canonical_application_path() {
+        assert!(validate_update_executable(Path::new(TRUSTED_UPDATE_EXECUTABLE)).is_ok());
+        for malicious in [
+            "/tmp/OneTouch.app/Contents/MacOS/onetouch",
+            "/Applications/OneTouch'.app/Contents/MacOS/onetouch",
+            "/Applications/OneTouch\".app/Contents/MacOS/onetouch",
+            "/Applications/OneTouch.app/Contents/MacOS/../MacOS/onetouch",
+            "/Users/example/Applications/OneTouch.app/Contents/MacOS/onetouch",
+        ] {
+            assert!(validate_update_executable(Path::new(malicious)).is_err());
+        }
+        assert_eq!(TRUSTED_UPDATE_TEMP_ROOT, "/private/tmp");
+    }
 
     #[cfg(target_os = "macos")]
     use super::migrate_legacy_webkit_data_in;
@@ -2477,7 +2651,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn migrates_legacy_webkit_local_storage_before_creating_webviews() {
-        let source = include_str!("lib.rs");
+        let source = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
         assert!(
             source.find("migrate_legacy_webkit_data()").unwrap()
                 < source.find("tauri::Builder::default()").unwrap()
@@ -2621,6 +2795,18 @@ mod tests {
             }])),
             (true, None)
         );
+    }
+
+    #[test]
+    fn disk_exclusions_and_ejects_use_stable_device_identifiers() {
+        let source = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(source.contains("exclusions.contains(&disk.id)"));
+        assert!(source.contains("[\"eject\", &disk.id]"));
+        assert!(source.contains("Duration::from_secs(3)"));
+
+        let app = include_str!("../../src/App.jsx");
+        assert!(app.contains("map((item) => item.id)"));
+        assert!(app.contains("setSavingDiskId(disk.id)"));
     }
 
     #[test]
@@ -2964,7 +3150,7 @@ mod tests {
     }
 
     #[test]
-    fn accessibility_guide_uses_native_file_drag_and_blocks_untrusted_controls() {
+    fn accessibility_guide_uses_native_file_drag_without_blocking_the_main_menu() {
         let helper = include_str!("macos_helper.m");
         assert!(helper.contains("@interface SBAccessibilityGuideController"));
         assert!(helper.contains("@interface SBAccessibilityDragView"));
@@ -2977,12 +3163,14 @@ mod tests {
         assert!(helper.contains("AXIsProcessTrustedWithOptions"));
         assert!(helper.contains("kAXTrustedCheckOptionPrompt"));
 
-        let source = include_str!("lib.rs");
-        assert!(source.contains("fn require_accessibility_or_show_guide"));
+        let source = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(!source.contains("fn require_accessibility_or_show_guide"));
+        assert!(!source.contains("Accessibility permission is required to use OneTouch"));
+        assert!(source.contains("contains(\"accessibility permission\")"));
         assert!(source.contains("sb_accessibility_guide_create()"));
         assert!(source.contains("update_accessibility_guide"));
         assert!(source.contains("show_accessibility_guide"));
-        assert!(source.contains("if unsafe { sb_accessibility_is_trusted() } == 0"));
+        assert!(source.contains("sb_accessibility_is_trusted() } == 0"));
 
         let app = include_str!("../../src/App.jsx");
         assert!(app.contains("ACCESSIBILITY_GUIDE_COPY"));
@@ -2992,6 +3180,15 @@ mod tests {
         let bridge = include_str!("../../src/nativeBridge.js");
         assert!(bridge.contains("invoke('update_accessibility_guide'"));
         assert!(bridge.contains("invoke('show_accessibility_guide'"));
+    }
+
+    #[test]
+    fn keep_awake_process_is_tied_to_the_app_lifecycle() {
+        let source = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(source.contains(".args([\"-dimsu\", \"-w\", &owner_pid])"));
+        assert!(source.contains("impl Drop for NativeState"));
+        assert!(source.contains("if matches!(event, tauri::RunEvent::Exit)"));
+        assert!(source.contains("let _ = set_awake(false, state.inner());"));
     }
 
     #[test]
@@ -3040,7 +3237,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn reads_bluetooth_audio_snapshot_without_changing_connection() {
-        let snapshot = super::native_audio_device_snapshot();
+        let state = super::NativeState::default();
+        let snapshot = super::native_audio_device_snapshot(&state);
         assert!(!snapshot.name.trim().is_empty());
         if snapshot.connected {
             assert!(snapshot.paired);

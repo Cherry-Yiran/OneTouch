@@ -19,15 +19,17 @@ const bridge = await readFile(new URL('./nativeBridge.js', import.meta.url), 'ut
 
 test('keeps beta builds distinct from formal releases', () => {
   assert.equal(formalConfig.productName, 'OneTouch');
-  assert.equal(formalConfig.version, '0.3.3');
+  assert.equal(formalConfig.version, '0.3.4');
   assert.equal(formalConfig.identifier, 'design.ryan.onetouch.menubar');
   assert.equal(betaConfig.productName, 'OneTouch Beta');
-  assert.equal(betaConfig.version, '0.3.3');
+  assert.equal(betaConfig.version, '0.3.4');
   assert.equal(packageJson.version, formalConfig.version);
   assert.equal(betaConfig.identifier, 'design.ryan.onetouch.beta');
   assert.notEqual(betaConfig.productName, formalConfig.productName);
   assert.notEqual(betaConfig.identifier, formalConfig.identifier);
   assert.equal(betaConfig.bundle.createUpdaterArtifacts, false);
+  assert.equal(betaConfig.bundle.macOS.signingIdentity, 'Switchboard Local Code Signing');
+  assert.equal(betaConfig.bundle.macOS.hardenedRuntime, true);
 });
 
 test('provides a dedicated beta build command', () => {
