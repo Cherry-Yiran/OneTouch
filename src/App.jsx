@@ -380,6 +380,22 @@ function localiseNativeError(error, language, text) {
   return message || text.unavailable;
 }
 
+function normaliseUpdaterError(error, fallbackStage) {
+  const stage = typeof error === 'object' && typeof error?.stage === 'string'
+    ? error.stage
+    : fallbackStage;
+  const message = typeof error === 'object' && typeof error?.message === 'string'
+    ? error.message
+    : String(error || 'Unknown updater error');
+  return { stage, message };
+}
+
+function updateFailureText(copy, stage) {
+  if (stage === 'download') return copy.updateDownloadFailed;
+  if (stage === 'install' || stage === 'prepare') return copy.updateInstallFailed;
+  return copy.updateFailed;
+}
+
 function listenWithRetry(register, handler, onReady = () => {}) {
   let disposed = false;
   let unlisten = () => {};
@@ -482,6 +498,8 @@ export default function App() {
   const nativePopoverActionRef = useRef(null);
   const nativePreferencesActionRef = useRef(null);
   const pendingNativeUpdateRef = useRef(null);
+  const nativeUpdateCheckPromiseRef = useRef(null);
+  const nativeUpdateInstallPromiseRef = useRef(null);
   const nativeSnapshotRequestRef = useRef(null);
   const timerRearmAttemptedRef = useRef(new Set());
   const secondaryCloseTimerRef = useRef(null);
@@ -642,6 +660,15 @@ export default function App() {
     } = {}) => {
       if (phase === 'installing') {
         setNativeUpdate((current) => ({ ...current, phase: 'installing', progress: 100 }));
+        return;
+      }
+      if (phase === 'download-start') {
+        setNativeUpdate((current) => ({
+          ...current,
+          phase: 'downloading',
+          downloaded: 0,
+          progress: 0,
+        }));
         return;
       }
       if (phase !== 'downloading') return;
@@ -1164,18 +1191,36 @@ export default function App() {
       await checkForAppUpdate({ manual: true });
       return;
     }
+    if (nativeUpdateInstallPromiseRef.current) {
+      await nativeUpdateInstallPromiseRef.current;
+      return;
+    }
     setNativeUpdate((current) => ({
       ...current,
       phase: 'downloading',
       downloaded: 0,
       progress: 0,
     }));
+    const installPromise = installNativeAppUpdate();
+    nativeUpdateInstallPromiseRef.current = installPromise;
     try {
-      await installNativeAppUpdate();
+      await installPromise;
       setNativeUpdate((current) => ({ ...current, phase: 'restarting', progress: 100 }));
       await relaunchNativeApp();
-    } catch {
-      setNativeUpdate((current) => ({ ...current, phase: 'error', progress: null }));
+    } catch (error) {
+      const failure = normaliseUpdaterError(error, 'install');
+      console.error('OneTouch updater failed', failure);
+      setNativeUpdate((current) => ({
+        ...current,
+        phase: 'error',
+        progress: null,
+        errorStage: failure.stage,
+        errorMessage: failure.message,
+      }));
+    } finally {
+      if (nativeUpdateInstallPromiseRef.current === installPromise) {
+        nativeUpdateInstallPromiseRef.current = null;
+      }
     }
   };
 
@@ -1186,8 +1231,10 @@ export default function App() {
     }
     pendingNativeUpdateRef.current = null;
     if (manual) setNativeUpdate({ phase: 'checking', version: '', progress: null });
+    const checkPromise = nativeUpdateCheckPromiseRef.current || checkNativeAppUpdate();
+    nativeUpdateCheckPromiseRef.current = checkPromise;
     try {
-      const update = await checkNativeAppUpdate();
+      const update = await checkPromise;
       if (appIdentifier) {
         localStorage.setItem(`onetouch-update-last-check-${appIdentifier}`, String(Date.now()));
       }
@@ -1198,9 +1245,21 @@ export default function App() {
       pendingNativeUpdateRef.current = update;
       setNativeUpdate({ phase: 'available', version: update.version, progress: null });
       return update;
-    } catch {
-      setNativeUpdate({ phase: manual ? 'error' : 'idle', version: '', progress: null });
+    } catch (error) {
+      const failure = normaliseUpdaterError(error, 'check');
+      console.error('OneTouch updater failed', failure);
+      setNativeUpdate({
+        phase: manual ? 'error' : 'idle',
+        version: '',
+        progress: null,
+        errorStage: failure.stage,
+        errorMessage: failure.message,
+      });
       return null;
+    } finally {
+      if (nativeUpdateCheckPromiseRef.current === checkPromise) {
+        nativeUpdateCheckPromiseRef.current = null;
+      }
     }
   };
 
@@ -1414,7 +1473,7 @@ export default function App() {
     if (nativeUpdate.phase === 'error') {
       return {
         kind: 'update',
-        title: copy.updateFailed,
+        title: updateFailureText(copy, nativeUpdate.errorStage),
         message: '',
         actionLabel: copy.retryUpdate,
         action: 'updateRetry',
@@ -1556,7 +1615,7 @@ export default function App() {
     if (nativeUpdate.phase === 'upToDate') updateStatus = copy.upToDate;
     if (nativeUpdate.phase === 'error') {
       updateTitle = copy.retryUpdate;
-      updateStatus = copy.updateFailed;
+      updateStatus = updateFailureText(copy, nativeUpdate.errorStage);
     }
     if (isBetaBuild) {
       updateTitle = copy.betaUpdateTitle;

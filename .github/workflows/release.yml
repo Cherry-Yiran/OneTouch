@@ -120,6 +120,43 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
+      - name: Verify updater manifest and downloadable artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_version="$(jq -r .version src-tauri/tauri.conf.json)"
+          release_tag="v$release_version"
+          updater_dir="$RUNNER_TEMP/onetouch-updater-verification"
+          mkdir -p "$updater_dir"
+          gh release download "$release_tag" \
+            --pattern latest.json \
+            --pattern '*.app.tar.gz' \
+            --pattern '*.app.tar.gz.sig' \
+            --dir "$updater_dir"
+
+          manifest="$updater_dir/latest.json"
+          jq -e --arg version "$release_version" '
+            .version == $version and
+            (.platforms["darwin-aarch64"].url | startswith("https://")) and
+            (.platforms["darwin-aarch64"].signature | length > 100)
+          ' "$manifest"
+
+          archive="$(find "$updater_dir" -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          signature_file="$archive.sig"
+          test -s "$archive"
+          test -s "$signature_file"
+          test "$(jq -r '.platforms["darwin-aarch64"].signature' "$manifest")" = "$(cat "$signature_file")"
+
+          manifest_url="$(jq -r '.platforms["darwin-aarch64"].url' "$manifest")"
+          curl --fail --location \
+            --retry 3 \
+            --retry-all-errors \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header 'Accept: application/octet-stream' \
+            "$manifest_url" \
+            --output "$updater_dir/downloaded.app.tar.gz"
+          cmp "$archive" "$updater_dir/downloaded.app.tar.gz"
+
       - name: Publish verified release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env,
     ffi::{CStr, CString},
+    fmt::Display,
     fs,
     io::Read,
     os::raw::{c_char, c_int, c_void},
@@ -29,7 +30,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Error as UpdaterError, Update, Updater, UpdaterExt};
 
 const ALL_CONTROL_IDS: [&str; 30] = [
     "desktop",
@@ -70,6 +71,11 @@ const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
 const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
 const TRUSTED_UPDATE_EXECUTABLE: &str = "/Applications/OneTouch.app/Contents/MacOS/onetouch";
 const TRUSTED_UPDATE_TEMP_ROOT: &str = "/private/tmp";
+const UPDATE_CHECK_ATTEMPTS: usize = 3;
+const UPDATE_DOWNLOAD_ATTEMPTS: usize = 3;
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const UPDATE_CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+const UPDATE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(target_os = "macos")]
 const LEGACY_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch";
@@ -88,6 +94,136 @@ struct NativeUpdateProgress {
     phase: &'static str,
     chunk_length: usize,
     content_length: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeUpdateError {
+    stage: &'static str,
+    message: String,
+}
+
+fn native_update_error(stage: &'static str, error: impl Display) -> NativeUpdateError {
+    let message = error.to_string();
+    eprintln!("OneTouch updater [{stage}]: {message}");
+    NativeUpdateError { stage, message }
+}
+
+fn updater_error_is_retryable(error: &UpdaterError) -> bool {
+    matches!(
+        error,
+        UpdaterError::Reqwest(_) | UpdaterError::Network(_) | UpdaterError::ReleaseNotFound
+    )
+}
+
+async fn wait_before_update_retry(attempt: usize) {
+    let delay = Duration::from_millis(500 * (attempt as u64 + 1));
+    let _ = tauri::async_runtime::spawn_blocking(move || thread::sleep(delay)).await;
+}
+
+fn build_native_updater(
+    app: &AppHandle,
+    executable: Option<&Path>,
+) -> Result<Updater, NativeUpdateError> {
+    let mut builder = app
+        .updater_builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .configure_client(|client| {
+            client
+                .connect_timeout(UPDATE_CONNECT_TIMEOUT)
+                .read_timeout(UPDATE_READ_TIMEOUT)
+        });
+    if let Some(executable) = executable {
+        builder = builder.executable_path(executable);
+    }
+    builder
+        .build()
+        .map_err(|error| native_update_error("initialize", error))
+}
+
+async fn check_updater_with_retry(updater: &Updater) -> Result<Option<Update>, NativeUpdateError> {
+    let mut last_message = String::from("Unknown updater error");
+    for attempt in 0..UPDATE_CHECK_ATTEMPTS {
+        match updater.check().await {
+            Ok(update) => return Ok(update),
+            Err(error) => {
+                let retryable = updater_error_is_retryable(&error);
+                last_message = error.to_string();
+                eprintln!(
+                    "OneTouch updater [check] attempt {}/{}: {}",
+                    attempt + 1,
+                    UPDATE_CHECK_ATTEMPTS,
+                    last_message
+                );
+                if !retryable || attempt + 1 == UPDATE_CHECK_ATTEMPTS {
+                    break;
+                }
+                wait_before_update_retry(attempt).await;
+            }
+        }
+    }
+    Err(native_update_error("check", last_message))
+}
+
+async fn download_update_with_retry(
+    app: &AppHandle,
+    update: &Update,
+) -> Result<Vec<u8>, NativeUpdateError> {
+    let mut last_message = String::from("Unknown updater error");
+    for attempt in 0..UPDATE_DOWNLOAD_ATTEMPTS {
+        let _ = app.emit(
+            "native-update-progress",
+            NativeUpdateProgress {
+                phase: "download-start",
+                chunk_length: 0,
+                content_length: None,
+            },
+        );
+        let progress_app = app.clone();
+        let finish_app = app.clone();
+        match update
+            .download(
+                move |chunk_length, content_length| {
+                    let _ = progress_app.emit(
+                        "native-update-progress",
+                        NativeUpdateProgress {
+                            phase: "downloading",
+                            chunk_length,
+                            content_length,
+                        },
+                    );
+                },
+                move || {
+                    let _ = finish_app.emit(
+                        "native-update-progress",
+                        NativeUpdateProgress {
+                            phase: "installing",
+                            chunk_length: 0,
+                            content_length: None,
+                        },
+                    );
+                },
+            )
+            .await
+        {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => {
+                let retryable = updater_error_is_retryable(&error);
+                last_message = error.to_string();
+                eprintln!(
+                    "OneTouch updater [download] attempt {}/{}: {}",
+                    attempt + 1,
+                    UPDATE_DOWNLOAD_ATTEMPTS,
+                    last_message
+                );
+                if !retryable || attempt + 1 == UPDATE_DOWNLOAD_ATTEMPTS {
+                    break;
+                }
+                wait_before_update_retry(attempt).await;
+            }
+        }
+    }
+    Err(native_update_error("download", last_message))
 }
 
 fn validate_update_executable(executable: &Path) -> Result<(), String> {
@@ -1958,76 +2094,47 @@ fn hide_current_window(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_native_app_update(app: AppHandle) -> Result<Option<NativeAppUpdate>, String> {
-    let update = app
-        .updater()
-        .map_err(|error| format!("Unable to initialize the updater: {error}"))?
-        .check()
-        .await
-        .map_err(|error| format!("Unable to check for updates: {error}"))?;
+async fn check_native_app_update(
+    app: AppHandle,
+) -> Result<Option<NativeAppUpdate>, NativeUpdateError> {
+    let updater = build_native_updater(&app, None)?;
+    let update = check_updater_with_retry(&updater).await?;
     Ok(update.map(|update| NativeAppUpdate {
         version: update.version,
     }))
 }
 
 #[tauri::command]
-async fn install_native_app_update(app: AppHandle) -> Result<(), String> {
-    let executable = trusted_update_executable()?;
+async fn install_native_app_update(app: AppHandle) -> Result<(), NativeUpdateError> {
+    let executable =
+        trusted_update_executable().map_err(|error| native_update_error("prepare", error))?;
     // The locked upstream installer creates a temporary extraction directory and
     // later includes that path in its privileged macOS fallback. Ignore a launch
     // environment supplied TMPDIR and force the extraction root to a fixed,
     // syntax-safe system directory before constructing the guarded updater.
     env::set_var("TMPDIR", TRUSTED_UPDATE_TEMP_ROOT);
 
-    let updater = app
-        .updater_builder()
-        .executable_path(&executable)
-        .build()
-        .map_err(|error| format!("Unable to initialize the updater: {error}"))?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|error| format!("Unable to check for updates: {error}"))?
-        .ok_or_else(|| "No newer OneTouch update is available".to_string())?;
+    let updater = build_native_updater(&app, Some(&executable))?;
+    let update = check_updater_with_retry(&updater)
+        .await?
+        .ok_or_else(|| native_update_error("check", "No newer OneTouch update is available"))?;
 
-    let progress_app = app.clone();
-    let finish_app = app.clone();
-    let bytes = update
-        .download(
-            move |chunk_length, content_length| {
-                let _ = progress_app.emit(
-                    "native-update-progress",
-                    NativeUpdateProgress {
-                        phase: "downloading",
-                        chunk_length,
-                        content_length,
-                    },
-                );
-            },
-            move || {
-                let _ = finish_app.emit(
-                    "native-update-progress",
-                    NativeUpdateProgress {
-                        phase: "installing",
-                        chunk_length: 0,
-                        content_length: None,
-                    },
-                );
-            },
-        )
-        .await
-        .map_err(|error| format!("Unable to download the update: {error}"))?;
+    let bytes = download_update_with_retry(&app, &update).await?;
 
     // Revalidate immediately before the privileged installation boundary so a
     // relocated bundle cannot pass an earlier check and then be installed.
-    let current_executable = trusted_update_executable()?;
+    let current_executable =
+        trusted_update_executable().map_err(|error| native_update_error("prepare", error))?;
     if current_executable != executable {
-        return Err("The OneTouch installation path changed during the update".into());
+        return Err(native_update_error(
+            "prepare",
+            "The OneTouch installation path changed during the update",
+        ));
     }
     env::set_var("TMPDIR", TRUSTED_UPDATE_TEMP_ROOT);
     update
         .install(bytes)
-        .map_err(|error| format!("Unable to install the update: {error}"))
+        .map_err(|error| native_update_error("install", error))
 }
 
 #[tauri::command]
@@ -2625,10 +2732,12 @@ mod tests {
     use super::{
         control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
         find_audio_device_battery, parse_defaults_bool, run_process_with_timeout,
-        snapshot_state_known, system_settings_url, timer_menu_choice, validate_update_executable,
-        DiskutilVolumeInfo, EjectableDiskCandidate, TRUSTED_UPDATE_EXECUTABLE,
-        TRUSTED_UPDATE_TEMP_ROOT,
+        snapshot_state_known, system_settings_url, timer_menu_choice, updater_error_is_retryable,
+        validate_update_executable, DiskutilVolumeInfo, EjectableDiskCandidate,
+        TRUSTED_UPDATE_EXECUTABLE, TRUSTED_UPDATE_TEMP_ROOT, UPDATE_CHECK_ATTEMPTS,
+        UPDATE_DOWNLOAD_ATTEMPTS,
     };
+    use tauri_plugin_updater::Error as UpdaterError;
 
     #[test]
     fn update_installation_accepts_only_the_canonical_application_path() {
@@ -2643,6 +2752,17 @@ mod tests {
             assert!(validate_update_executable(Path::new(malicious)).is_err());
         }
         assert_eq!(TRUSTED_UPDATE_TEMP_ROOT, "/private/tmp");
+    }
+
+    #[test]
+    fn retries_only_transient_updater_failures() {
+        assert_eq!(UPDATE_CHECK_ATTEMPTS, 3);
+        assert_eq!(UPDATE_DOWNLOAD_ATTEMPTS, 3);
+        assert!(updater_error_is_retryable(&UpdaterError::Network(
+            "temporary GitHub error".into()
+        )));
+        assert!(updater_error_is_retryable(&UpdaterError::ReleaseNotFound));
+        assert!(!updater_error_is_retryable(&UpdaterError::UnsupportedOs));
     }
 
     #[cfg(target_os = "macos")]
