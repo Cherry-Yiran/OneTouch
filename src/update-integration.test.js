@@ -50,6 +50,10 @@ test('release builds create signed updater artifacts from GitHub Releases', () =
   assert.doesNotMatch(workflow, /Developer ID Application identity/);
   assert.match(workflow, /releaseDraft: true/);
   assert.match(workflow, /codesign --verify --deep --strict/);
+  assert.match(workflow, /Verify updater manifest and downloadable artifact/);
+  assert.match(workflow, /gh release download "\$release_tag"/);
+  assert.match(workflow, /curl --fail --location/);
+  assert.match(workflow, /cmp "\$archive" "\$updater_dir\/downloaded\.app\.tar\.gz"/);
   assert.doesNotMatch(workflow, /spctl --assess --type execute/);
   assert.doesNotMatch(workflow, /xcrun stapler validate/);
   assert.match(workflow, /gh release edit "\$release_tag" --draft=false/);
@@ -64,15 +68,25 @@ test('the native bridge checks and installs only through the guarded Rust update
 
   assert.match(rust, /TRUSTED_UPDATE_EXECUTABLE/);
   assert.match(rust, /trusted_update_executable/);
-  assert.match(rust, /updater_builder\(\)\s*\.executable_path\(&executable\)/);
+  assert.match(rust, /build_native_updater\(&app, Some\(&executable\)\)/);
+  assert.match(rust, /builder = builder\.executable_path\(executable\)/);
   assert.match(rust, /env::set_var\("TMPDIR", TRUSTED_UPDATE_TEMP_ROOT\)/);
+  assert.match(rust, /UPDATE_CHECK_ATTEMPTS:\s*usize\s*=\s*3/);
+  assert.match(rust, /UPDATE_DOWNLOAD_ATTEMPTS:\s*usize\s*=\s*3/);
+  assert.match(rust, /check_updater_with_retry/);
+  assert.match(rust, /download_update_with_retry/);
+  assert.match(rust, /phase:\s*"download-start"/);
+  assert.match(app, /phase === 'download-start'[\s\S]*downloaded:\s*0[\s\S]*progress:\s*0/);
+  assert.match(app, /updateFailureText\(copy, nativeUpdate\.errorStage\)/);
 });
 
 test('checks quietly in the background and keeps manual installation user initiated', () => {
   assert.match(app, /updateCheckIsDue\(localStorage\.getItem\(storageKey\)\)/);
   assert.match(app, /checkForAppUpdate\(\{ manual: false \}\)/);
   assert.match(app, /setTimeout\([\s\S]*2500/);
+  assert.match(app, /nativeUpdateCheckPromiseRef\.current \|\| checkNativeAppUpdate\(\)/);
+  assert.match(app, /if \(nativeUpdateInstallPromiseRef\.current\)/);
   assert.match(app, /action === 'updateInstall'[\s\S]*installPendingAppUpdate\(\)/);
-  assert.match(app, /await installNativeAppUpdate\(\)/);
+  assert.match(app, /const installPromise = installNativeAppUpdate\(\)/);
   assert.match(app, /await relaunchNativeApp\(\)/);
 });

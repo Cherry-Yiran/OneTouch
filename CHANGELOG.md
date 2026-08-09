@@ -2,6 +2,27 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.0] - 2026-08-09
+
+OneTouch 进入首个稳定正式版本。
+
+### 改进
+
+- 更新检查和安装链路会对临时网络故障自动重试，下载重试时会正确重置进度。
+- 后台检查与手动检查会复用同一个请求，避免并发结果互相覆盖。
+- 更新失败会区分检查、下载和安装阶段，提供更准确的恢复提示。
+- 发布流程会在公开版本前验证 `latest.json`、更新签名、下载地址和实际更新包完全一致。
+
+### 修复
+
+- 修复偶发网络波动直接导致“无法检查更新”，再次点击后才可能恢复的问题。
+- 修复下载中断后不能自动恢复，以及重试时进度可能不准确的问题。
+- 修复同时触发后台检查与手动检查时，界面状态可能被较晚返回的请求覆盖的问题。
+
+### 验证
+
+- 已完成官方 `0.3.2 → 0.3.4` 与 `0.3.3 → 0.3.4` 的真实升级测试，包括发现更新、下载、验签、覆盖安装和自动重启。
+
 ## [0.3.4] - 2026-08-08
 
 ### 改进
@@ -126,8 +147,9 @@
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
-[0.3.3]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.2...v0.3.3
+[1.0.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.4...v1.0.0
 [0.3.4]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.2.0...v0.3.0
