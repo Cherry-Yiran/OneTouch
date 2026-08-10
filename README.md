@@ -7,8 +7,24 @@
 <p align="center"><strong>一个开关，处理 Mac 上每天重复的小事。</strong></p>
 
 <p align="center">
+  <strong>简体中文</strong>
+  ·
+  <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   OneTouch 是一款原生 macOS 菜单栏工具，把专注、显示、清理、设备与常用系统控制收进一个轻量面板。
 </p>
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/onetouch-menu.png" width="360" alt="OneTouch 菜单栏控制面板">
+  &nbsp;&nbsp;
+  <img src="docs/images/onetouch-about.png" width="400" alt="OneTouch 关于页面">
+</p>
+
+OneTouch 使用 AppKit 原生面板、控件、字体、颜色与系统材质，并自动适配浅色和深色外观。
 
 <p align="center">
   <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><strong>下载最新版</strong></a>
