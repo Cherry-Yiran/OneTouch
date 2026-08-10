@@ -16,14 +16,6 @@
   OneTouch is a lightweight, native macOS menu bar utility for focus, display, cleanup, device, and everyday system controls.
 </p>
 
-## Preview
-
-<p align="center">
-  <img src="docs/images/onetouch-preview.png" width="900" alt="OneTouch menu bar and customisation preview">
-</p>
-
-OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
-
 <p align="center">
   <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><strong>Download</strong></a>
   ·
@@ -33,11 +25,21 @@ OneTouch uses native AppKit panels, controls, typography, colours, and system ma
 </p>
 
 <p align="center">
-  <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Cherry-Yiran/OneTouch?style=flat-square&label=release"></a>
+  <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Cherry-Yiran/OneTouch?display_name=tag&sort=semver&style=flat-square&label=release"></a>
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black?style=flat-square&logo=apple">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/chip-Apple%20Silicon-black?style=flat-square&logo=apple">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white">
 </p>
+
+<p align="center">
+  <img src="docs/images/onetouch-preview.png" width="900" alt="OneTouch menu bar and customisation preview">
+</p>
+
+<p align="center">
+  OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
+</p>
+
+---
 
 ## Why OneTouch
 
