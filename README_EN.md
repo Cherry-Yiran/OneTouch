@@ -16,6 +16,16 @@
   OneTouch is a lightweight, native macOS menu bar utility for focus, display, cleanup, device, and everyday system controls.
 </p>
 
+## Preview
+
+<p align="center">
+  <img src="docs/images/onetouch-menu.png" width="360" alt="OneTouch menu bar controls">
+  &nbsp;&nbsp;
+  <img src="docs/images/onetouch-about.png" width="400" alt="OneTouch About window">
+</p>
+
+OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
+
 <p align="center">
   <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><strong>Download</strong></a>
   ·
@@ -30,16 +40,6 @@
   <img alt="Apple Silicon" src="https://img.shields.io/badge/chip-Apple%20Silicon-black?style=flat-square&logo=apple">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white">
 </p>
-
-## Preview
-
-<p align="center">
-  <img src="docs/images/onetouch-menu.png" width="360" alt="OneTouch menu bar controls">
-  &nbsp;&nbsp;
-  <img src="docs/images/onetouch-about.png" width="400" alt="OneTouch About window">
-</p>
-
-OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
 
 ## Why OneTouch
 
