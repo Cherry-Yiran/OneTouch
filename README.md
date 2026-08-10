@@ -19,9 +19,7 @@
 ## 界面预览
 
 <p align="center">
-  <img src="docs/images/onetouch-menu.png" width="360" alt="OneTouch 菜单栏控制面板">
-  &nbsp;&nbsp;
-  <img src="docs/images/onetouch-about.png" width="400" alt="OneTouch 关于页面">
+  <img src="docs/images/onetouch-preview.png" width="900" alt="OneTouch 菜单栏与自定义页面预览">
 </p>
 
 OneTouch 使用 AppKit 原生面板、控件、字体、颜色与系统材质，并自动适配浅色和深色外观。

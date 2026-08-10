@@ -19,9 +19,7 @@
 ## Preview
 
 <p align="center">
-  <img src="docs/images/onetouch-menu.png" width="360" alt="OneTouch menu bar controls">
-  &nbsp;&nbsp;
-  <img src="docs/images/onetouch-about.png" width="400" alt="OneTouch About window">
+  <img src="docs/images/onetouch-preview.png" width="900" alt="OneTouch menu bar and customisation preview">
 </p>
 
 OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
