@@ -98,6 +98,31 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @interface SBNativeRowsDocumentView : NSView
 @end
 
+@interface SBMagicalBackdropView : NSView
+@end
+
+@interface SBMagicalEffectBackdropView : NSVisualEffectView
+@end
+
+@interface SBMagicalCrestImageView : NSImageView
+- (void)refreshForAppearance;
+@end
+
+@interface SBMagicalMedallionView : NSView
+@property(nonatomic, strong) NSImageView *iconView;
+@property(nonatomic, assign, getter=isActive) BOOL active;
+- (instancetype)initWithIcon:(NSImage *)image active:(BOOL)active;
+@end
+
+@interface SBMagicalHoverButton : NSButton
+@property(nonatomic, strong) NSTrackingArea *magicTrackingArea;
+@property(nonatomic, assign, getter=isMagicHovered) BOOL magicHovered;
+@end
+
+
+@interface SBMagicalPopUpButton : NSPopUpButton
+@end
+
 @interface SBAccessibilityGuidePanel : NSPanel
 @end
 
@@ -239,28 +264,25 @@ static NSInteger SBShowTimerMenuForView(NSView *view, BOOL useChinese) {
     return target.selectedTag;
 }
 
-static NSImage *SBSingleSwitchTemplate(CGFloat width) {
-    CGFloat height = round(width * 0.58);
+static NSImage *SBFourPointStarTemplate(CGFloat width) {
+    CGFloat height = width;
     NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(width, height)];
     [image lockFocus];
-
-    CGFloat strokeWidth = MAX(1.2, width * 0.085);
-    NSRect trackRect = NSInsetRect(NSMakeRect(0.0, 0.0, width, height),
-                                   strokeWidth * 0.5, strokeWidth * 0.5);
-    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:trackRect
-                                                          xRadius:NSHeight(trackRect) * 0.5
-                                                          yRadius:NSHeight(trackRect) * 0.5];
-    track.lineWidth = strokeWidth;
-    [NSColor.blackColor setStroke];
-    [track stroke];
-
-    CGFloat knobDiameter = NSHeight(trackRect) - strokeWidth * 2.1;
-    NSRect knobRect = NSMakeRect(NSMaxX(trackRect) - strokeWidth - knobDiameter,
-                                 NSMidY(trackRect) - knobDiameter * 0.5,
-                                 knobDiameter, knobDiameter);
+    CGFloat center = width * 0.5;
+    CGFloat outer = width * 0.47;
+    CGFloat inner = width * 0.13;
+    NSBezierPath *star = [NSBezierPath bezierPath];
+    [star moveToPoint:NSMakePoint(center, center + outer)];
+    [star lineToPoint:NSMakePoint(center + inner, center + inner)];
+    [star lineToPoint:NSMakePoint(center + outer, center)];
+    [star lineToPoint:NSMakePoint(center + inner, center - inner)];
+    [star lineToPoint:NSMakePoint(center, center - outer)];
+    [star lineToPoint:NSMakePoint(center - inner, center - inner)];
+    [star lineToPoint:NSMakePoint(center - outer, center)];
+    [star lineToPoint:NSMakePoint(center - inner, center + inner)];
+    [star closePath];
     [NSColor.blackColor setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:knobRect] fill];
-
+    [star fill];
     [image unlockFocus];
     image.template = YES;
     image.accessibilityDescription = @"OneTouch";
@@ -298,7 +320,7 @@ static void SBUpdateStatusImage(void) {
             [SBStatusIconView.heightAnchor constraintEqualToConstant:18.0],
         ]];
     }
-    SBStatusIconView.image = SBSingleSwitchTemplate(16.0);
+    SBStatusIconView.image = SBFourPointStarTemplate(15.0);
     // Keep the standard AppKit rendering pipeline. A nil content tint lets the
     // template image follow the menu bar's light/dark and accessibility state.
     SBStatusIconView.contentTintColor = nil;
@@ -440,6 +462,259 @@ static NSImage *SBSymbol(NSString *name, CGFloat size, NSFontWeight weight) {
     }
     return nil;
 }
+
+static BOOL SBMagicalAppearanceIsDark(NSAppearance *appearance) {
+    return [appearance.name rangeOfString:@"dark"
+                                  options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static NSColor *SBMagicalDynamicColor(CGFloat lightRed, CGFloat lightGreen,
+                                      CGFloat lightBlue, CGFloat lightAlpha,
+                                      CGFloat darkRed, CGFloat darkGreen,
+                                      CGFloat darkBlue, CGFloat darkAlpha) {
+    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
+        BOOL dark = SBMagicalAppearanceIsDark(appearance);
+        return [NSColor colorWithSRGBRed:dark ? darkRed : lightRed
+                                   green:dark ? darkGreen : lightGreen
+                                    blue:dark ? darkBlue : lightBlue
+                                   alpha:dark ? darkAlpha : lightAlpha];
+    }];
+}
+
+static NSColor *SBMagicalCanvasColor(void) {
+    return SBMagicalDynamicColor(1.000, 0.973, 0.949, 0.88,
+                                 0.141, 0.102, 0.208, 0.90);
+}
+
+static NSColor *SBMagicalRaisedColor(void) {
+    return SBMagicalDynamicColor(1.000, 0.945, 0.957, 0.94,
+                                 0.286, 0.188, 0.310, 0.92);
+}
+
+static NSColor *SBMagicalInputColor(void) {
+    return SBMagicalDynamicColor(1.000, 0.997, 0.988, 0.98,
+                                 0.286, 0.188, 0.310, 0.96);
+}
+
+static NSColor *SBMagicalPreferencesCanvasColor(void) {
+    return SBMagicalDynamicColor(1.000, 0.973, 0.965, 1.0,
+                                 0.141, 0.102, 0.208, 1.0);
+}
+
+static NSColor *SBMagicalPrimaryColor(void) {
+    return SBMagicalDynamicColor(0.969, 0.471, 0.647, 1.0,
+                                 1.000, 0.518, 0.694, 1.0);
+}
+
+static NSColor *SBMagicalSecondaryColor(void) {
+    return SBMagicalDynamicColor(1.000, 0.667, 0.471, 1.0,
+                                 0.784, 0.698, 1.000, 1.0);
+}
+
+static NSColor *SBMagicalGoldColor(void) {
+    return SBMagicalDynamicColor(0.965, 0.784, 0.404, 1.0,
+                                 0.898, 0.722, 0.369, 1.0);
+}
+
+static NSColor *SBMagicalTextColor(void) {
+    return SBMagicalDynamicColor(0.341, 0.220, 0.275, 1.0,
+                                 1.000, 0.949, 0.969, 1.0);
+}
+
+static NSColor *SBMagicalMutedColor(void) {
+    return SBMagicalDynamicColor(0.635, 0.502, 0.553, 1.0,
+                                 0.725, 0.624, 0.706, 1.0);
+}
+
+static NSColor *SBMagicalEdgeColor(void) {
+    return SBMagicalDynamicColor(0.949, 0.800, 0.835, 0.88,
+                                 1.000, 0.824, 0.902, 0.22);
+}
+
+static NSFont *SBMagicalRoundedFont(CGFloat size, NSFontWeight weight) {
+    NSFont *base = [NSFont systemFontOfSize:size weight:weight];
+    if (@available(macOS 10.15, *)) {
+        NSFontDescriptor *rounded =
+            [base.fontDescriptor fontDescriptorWithDesign:NSFontDescriptorSystemDesignRounded];
+        if (rounded != nil) return [NSFont fontWithDescriptor:rounded size:size] ?: base;
+    }
+    return base;
+}
+
+static void SBStyleMagicalSecondaryButton(NSButton *button, NSString *title,
+                                           NSFont *font, BOOL emphasized) {
+    if (button == nil) return;
+    NSString *resolvedTitle = title ?: @"";
+    NSColor *textColor = emphasized ? NSColor.whiteColor : SBMagicalTextColor();
+    button.title = resolvedTitle;
+    button.font = font;
+    button.bezelColor = emphasized ? SBMagicalPrimaryColor() : SBMagicalInputColor();
+    button.contentTintColor = textColor;
+    button.attributedTitle = [[NSAttributedString alloc] initWithString:resolvedTitle
+        attributes:@{
+            NSFontAttributeName: font,
+            NSForegroundColorAttributeName: textColor,
+        }];
+}
+
+@implementation SBMagicalHoverButton
+- (instancetype)initWithFrame:(NSRect)frameRect {
+    self = [super initWithFrame:frameRect];
+    if (self != nil) {
+        self.bordered = NO;
+        self.buttonType = NSButtonTypeMomentaryPushIn;
+    }
+    return self;
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (self.magicTrackingArea != nil) [self removeTrackingArea:self.magicTrackingArea];
+    self.magicTrackingArea = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+            options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInActiveApp |
+                    NSTrackingInVisibleRect
+              owner:self
+           userInfo:nil];
+    [self addTrackingArea:self.magicTrackingArea];
+}
+- (void)mouseEntered:(NSEvent *)event {
+    (void)event;
+    self.magicHovered = YES;
+    self.needsDisplay = YES;
+}
+- (void)mouseExited:(NSEvent *)event {
+    (void)event;
+    self.magicHovered = NO;
+    self.needsDisplay = YES;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+    if (self.magicHovered || self.highlighted) {
+        NSRect fillRect = NSInsetRect(self.bounds, 1.0, 1.0);
+        NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:fillRect xRadius:9.0 yRadius:9.0];
+        [SBMagicalRaisedColor() setFill];
+        [path fill];
+        [SBMagicalEdgeColor() setStroke];
+        path.lineWidth = 1.0;
+        [path stroke];
+    }
+    [super drawRect:dirtyRect];
+}
+@end
+
+
+@implementation SBMagicalPopUpButton
+- (instancetype)initWithFrame:(NSRect)buttonFrame pullsDown:(BOOL)flag {
+    self = [super initWithFrame:buttonFrame pullsDown:flag];
+    if (self != nil) self.bordered = NO;
+    return self;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+    NSRect fillRect = NSInsetRect(self.bounds, 0.5, 0.5);
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:fillRect xRadius:8.0 yRadius:8.0];
+    [(self.highlighted ? SBMagicalRaisedColor() : SBMagicalInputColor()) setFill];
+    [path fill];
+    [SBMagicalEdgeColor() setStroke];
+    path.lineWidth = 1.0;
+    [path stroke];
+    [super drawRect:dirtyRect];
+}
+@end
+
+static void SBDrawMagicalBackdrop(NSView *view, NSRect dirtyRect) {
+    (void)dirtyRect;
+    NSColor *start = SBMagicalCanvasColor();
+    NSColor *end = SBMagicalDynamicColor(1.000, 0.929, 0.949, 0.82,
+                                        0.200, 0.141, 0.259, 0.88);
+    NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:start endingColor:end];
+    [gradient drawInRect:view.bounds angle:-55.0];
+}
+
+@implementation SBMagicalBackdropView
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    SBDrawMagicalBackdrop(self, dirtyRect);
+}
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    self.needsDisplay = YES;
+}
+@end
+
+@implementation SBMagicalEffectBackdropView
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    SBDrawMagicalBackdrop(self, dirtyRect);
+}
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    self.needsDisplay = YES;
+}
+@end
+
+@implementation SBMagicalCrestImageView
+- (void)refreshForAppearance {
+    BOOL dark = SBMagicalAppearanceIsDark(self.effectiveAppearance);
+    NSString *filename = dark ? @"crest-dark.png" : @"crest-light.png";
+    NSString *path = [NSBundle.mainBundle.resourcePath
+        stringByAppendingPathComponent:[@"magical" stringByAppendingPathComponent:filename]];
+    NSImage *crest = [[NSImage alloc] initWithContentsOfFile:path];
+    self.image = crest ?: SBSymbol(@"sparkles", 28.0, NSFontWeightMedium);
+    self.contentTintColor = crest == nil ? SBMagicalPrimaryColor() : nil;
+    self.imageScaling = NSImageScaleProportionallyDown;
+}
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    [self refreshForAppearance];
+}
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self refreshForAppearance];
+}
+@end
+
+@implementation SBMagicalMedallionView
+- (instancetype)initWithIcon:(NSImage *)image active:(BOOL)active {
+    self = [super initWithFrame:NSZeroRect];
+    if (self != nil) {
+        _active = active;
+        _iconView = [NSImageView new];
+        _iconView.translatesAutoresizingMaskIntoConstraints = NO;
+        _iconView.image = image;
+        _iconView.imageScaling = NSImageScaleProportionallyDown;
+        [self addSubview:_iconView];
+        [NSLayoutConstraint activateConstraints:@[
+            [_iconView.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
+            [_iconView.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+            [_iconView.widthAnchor constraintEqualToConstant:18.0],
+            [_iconView.heightAnchor constraintEqualToConstant:18.0],
+        ]];
+    }
+    return self;
+}
+- (void)setActive:(BOOL)active {
+    _active = active;
+    self.iconView.contentTintColor = active ? NSColor.whiteColor : SBMagicalMutedColor();
+    self.needsDisplay = YES;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    NSRect bounds = NSInsetRect(self.bounds, 0.5, 0.5);
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:9.0 yRadius:9.0];
+    NSGradient *fill = self.active
+        ? [[NSGradient alloc] initWithStartingColor:SBMagicalPrimaryColor()
+                                       endingColor:SBMagicalSecondaryColor()]
+        : [[NSGradient alloc] initWithStartingColor:SBMagicalRaisedColor()
+                                       endingColor:SBMagicalCanvasColor()];
+    [fill drawInBezierPath:path angle:-45.0];
+    [(self.active ? SBMagicalGoldColor() : SBMagicalEdgeColor()) setStroke];
+    path.lineWidth = 1.0;
+    [path stroke];
+}
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self setActive:self.active];
+}
+@end
 
 static NSImageView *SBNewFeatureBadgeView(NSString *toolTip) {
     NSImageView *badge = [NSImageView new];
@@ -1238,13 +1513,13 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         NSGlassEffectView *glass = [[NSGlassEffectView alloc] initWithFrame:initialFrame];
         glass.style = NSGlassEffectViewStyleRegular;
         glass.tintColor = nil;
-        NSView *content = [[NSView alloc] initWithFrame:initialFrame];
+        NSView *content = [[SBMagicalBackdropView alloc] initWithFrame:initialFrame];
         content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         glass.contentView = content;
         self.contentHostView = content;
         self.view = glass;
     } else {
-        NSVisualEffectView *content = [[NSVisualEffectView alloc] initWithFrame:initialFrame];
+        NSVisualEffectView *content = [[SBMagicalEffectBackdropView alloc] initWithFrame:initialFrame];
         content.material = NSVisualEffectMaterialPopover;
         content.blendingMode = NSVisualEffectBlendingModeBehindWindow;
         content.state = NSVisualEffectStateActive;
@@ -1260,20 +1535,15 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         [header.heightAnchor constraintEqualToConstant:SBNativeHeaderHeight + announcementHeight];
     headerHeightConstraint.active = YES;
 
-    NSImageView *mark = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    SBMagicalCrestImageView *mark = [[SBMagicalCrestImageView alloc] initWithFrame:NSZeroRect];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
-    mark.image = SBSingleSwitchTemplate(20.0);
-    // Leave template rendering untinted so AppKit keeps the brand mark
-    // legible across light, dark, glass, and accessibility appearances.
-    mark.contentTintColor = nil;
     mark.imageScaling = NSImageScaleProportionallyDown;
+    [mark refreshForAppearance];
     [header addSubview:mark];
 
-    NSTextField *title = SBLabel(model[@"title"], [NSFont systemFontOfSize:15.0 weight:NSFontWeightMedium],
-                                 NSColor.labelColor);
-    NSTextField *subtitle = SBLabel(model[@"subtitle"], [NSFont systemFontOfSize:11.5 weight:NSFontWeightRegular],
-                                    NSColor.secondaryLabelColor);
-    NSStackView *copy = [NSStackView stackViewWithViews:@[title, subtitle]];
+    NSTextField *title = SBLabel(model[@"title"], SBMagicalRoundedFont(15.0, NSFontWeightSemibold),
+                                 SBMagicalTextColor());
+    NSStackView *copy = [NSStackView stackViewWithViews:@[title]];
     copy.orientation = NSUserInterfaceLayoutOrientationVertical;
     copy.alignment = NSLayoutAttributeLeading;
     copy.spacing = 1.0;
@@ -1284,16 +1554,15 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         [mark.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:SBNativeSideInset],
         [mark.centerYAnchor constraintEqualToAnchor:header.topAnchor
                                             constant:SBNativeHeaderHeight / 2.0],
-        [mark.widthAnchor constraintEqualToConstant:28.0],
-        [mark.heightAnchor constraintEqualToConstant:28.0],
-        [copy.leadingAnchor constraintEqualToAnchor:mark.trailingAnchor constant:10.0],
+        [mark.widthAnchor constraintEqualToConstant:42.0],
+        [mark.heightAnchor constraintEqualToConstant:42.0],
+        [copy.leadingAnchor constraintEqualToAnchor:mark.trailingAnchor constant:12.0],
         [copy.trailingAnchor constraintLessThanOrEqualToAnchor:header.trailingAnchor constant:-14.0],
         [copy.centerYAnchor constraintEqualToAnchor:mark.centerYAnchor],
     ]];
 
     NSMutableDictionary *bindings = [@{
         @"title": title,
-        @"subtitle": subtitle,
         @"headerHeightConstraint": headerHeightConstraint,
     } mutableCopy];
     NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
@@ -1395,9 +1664,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 - (void)updateHeader:(NSDictionary *)model {
     if (self.headerBindings == nil) return;
     NSTextField *title = self.headerBindings[@"title"];
-    NSTextField *subtitle = self.headerBindings[@"subtitle"];
     title.stringValue = model[@"title"] ?: @"";
-    subtitle.stringValue = model[@"subtitle"] ?: @"";
 
     NSDictionary *announcement = [model[@"announcement"] isKindOfClass:NSDictionary.class]
         ? model[@"announcement"]
@@ -1478,18 +1745,19 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     BOOL pending = [row[@"pending"] boolValue];
     NSString *kind = row[@"kind"] ?: @"toggle";
 
-    NSImageView *icon = [NSImageView new];
-    icon.translatesAutoresizingMaskIntoConstraints = NO;
-    icon.image = SBSymbol(row[@"symbol"], 16.0, NSFontWeightRegular);
-    icon.imageScaling = NSImageScaleProportionallyDown;
-    icon.contentTintColor = active ? NSColor.controlAccentColor : NSColor.secondaryLabelColor;
-    [container addSubview:icon];
+    SBMagicalMedallionView *medallion = [[SBMagicalMedallionView alloc]
+        initWithIcon:SBSymbol(row[@"symbol"], 16.0, NSFontWeightRegular)
+              active:active];
+    medallion.translatesAutoresizingMaskIntoConstraints = NO;
+    medallion.active = active;
+    NSImageView *icon = medallion.iconView;
+    [container addSubview:medallion];
 
     NSTextField *title = SBLabel(row[@"title"], [NSFont systemFontOfSize:NSFont.systemFontSize
-                                                                 weight:NSFontWeightRegular],
-                                 enabled ? NSColor.labelColor : NSColor.tertiaryLabelColor);
+                                                                 weight:NSFontWeightMedium],
+                                 enabled ? SBMagicalTextColor() : NSColor.tertiaryLabelColor);
     NSColor *statusColor = [row[@"error"] boolValue] ? NSColor.systemRedColor
-                                                     : (enabled ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor);
+                                                     : (enabled ? SBMagicalMutedColor() : NSColor.tertiaryLabelColor);
     NSTextField *status = SBLabel(row[@"status"], [NSFont systemFontOfSize:NSFont.smallSystemFontSize
                                                                    weight:NSFontWeightRegular],
                                   statusColor);
@@ -1528,7 +1796,8 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         button.bezelStyle = NSBezelStyleRounded;
         button.controlSize = NSControlSizeSmall;
         button.enabled = enabled && !pending && !locked;
-        button.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
+        SBStyleMagicalSecondaryButton(button, row[@"actionLabel"] ?: @"",
+                                      SBMagicalRoundedFont(12.0, NSFontWeightSemibold), NO);
         target.controlID = row[@"id"] ?: @"";
         target.actionName = @"activate";
         target.control = button;
@@ -1543,11 +1812,11 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     [controlColumn addSubview:affordance];
 
     [NSLayoutConstraint activateConstraints:@[
-        [icon.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:SBNativeSideInset],
-        [icon.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
-        [icon.widthAnchor constraintEqualToConstant:24.0],
-        [icon.heightAnchor constraintEqualToConstant:24.0],
-        [copy.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:10.0],
+        [medallion.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:SBNativeSideInset],
+        [medallion.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
+        [medallion.widthAnchor constraintEqualToConstant:28.0],
+        [medallion.heightAnchor constraintEqualToConstant:28.0],
+        [copy.leadingAnchor constraintEqualToAnchor:medallion.trailingAnchor constant:10.0],
         [copy.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
         [copy.trailingAnchor constraintLessThanOrEqualToAnchor:controlColumn.leadingAnchor constant:-10.0],
         [controlColumn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-SBNativeSideInset],
@@ -1560,6 +1829,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSString *controlID = row[@"id"] ?: @"";
     if (controlID.length > 0) {
         self.rowBindings[controlID] = @{
+            @"medallion": medallion,
             @"icon": icon,
             @"title": title,
             @"status": status,
@@ -1575,29 +1845,32 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSView *footer = [NSView new];
     [footer.heightAnchor constraintEqualToConstant:SBNativeFooterHeight].active = YES;
 
-    NSButton *settings = [[NSButton alloc] initWithFrame:NSZeroRect];
+    NSButton *settings = [[SBMagicalHoverButton alloc] initWithFrame:NSZeroRect];
     settings.image = SBSymbol(@"slider.horizontal.3", 15.0, NSFontWeightRegular);
     settings.imagePosition = NSImageOnly;
     settings.bezelStyle = NSBezelStyleAccessoryBarAction;
     settings.controlSize = NSControlSizeRegular;
+    settings.contentTintColor = SBMagicalPrimaryColor();
     settings.toolTip = model[@"settingsLabel"] ?: @"Settings";
 
-    NSButton *customise = [[NSButton alloc] initWithFrame:NSZeroRect];
+    NSButton *customise = [[SBMagicalHoverButton alloc] initWithFrame:NSZeroRect];
     customise.title = model[@"customiseLabel"] ?: @"Customise";
     customise.bezelStyle = NSBezelStyleAccessoryBarAction;
     customise.controlSize = NSControlSizeRegular;
-    customise.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular];
+    customise.font = SBMagicalRoundedFont(13.0, NSFontWeightSemibold);
+    customise.contentTintColor = SBMagicalPrimaryColor();
 
     NSImageView *customiseBadge = nil;
     if ([model[@"showCustomiseBadge"] boolValue]) {
         customiseBadge = SBNewFeatureBadgeView(model[@"newFeatureLabel"] ?: @"New feature");
     }
 
-    NSButton *quit = [[NSButton alloc] initWithFrame:NSZeroRect];
+    NSButton *quit = [[SBMagicalHoverButton alloc] initWithFrame:NSZeroRect];
     quit.image = SBSymbol(@"power", 16.0, NSFontWeightRegular);
     quit.imagePosition = NSImageOnly;
     quit.bezelStyle = NSBezelStyleAccessoryBarAction;
     quit.controlSize = NSControlSizeRegular;
+    quit.contentTintColor = NSColor.systemRedColor;
     quit.toolTip = model[@"quitLabel"] ?: @"Quit";
 
     // AppKit owns every pointer, pressed, inactive, and appearance state for
@@ -1612,7 +1885,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     NSArray<NSString *> *actions = @[@"settings", @"customise", @"quit"];
     for (NSUInteger index = 0; index < buttons.count; index += 1) {
         buttons[index].buttonType = NSButtonTypeMomentaryPushIn;
-        buttons[index].bordered = YES;
+        buttons[index].bordered = NO;
         SBNativeControlTarget *target = [SBNativeControlTarget new];
         target.actionName = actions[index];
         target.controlID = @"";
@@ -1680,17 +1953,19 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 
     NSImageView *icon = binding[@"icon"];
     icon.image = SBSymbol(row[@"symbol"], 16.0, NSFontWeightRegular);
-    icon.contentTintColor = active ? NSColor.controlAccentColor : NSColor.secondaryLabelColor;
+    icon.contentTintColor = active ? NSColor.whiteColor : SBMagicalMutedColor();
+    SBMagicalMedallionView *medallion = binding[@"medallion"];
+    medallion.active = active;
 
     NSTextField *title = binding[@"title"];
     title.stringValue = row[@"title"] ?: @"";
-    title.textColor = enabled ? NSColor.labelColor : NSColor.tertiaryLabelColor;
+    title.textColor = enabled ? SBMagicalTextColor() : NSColor.tertiaryLabelColor;
 
     NSTextField *status = binding[@"status"];
     status.stringValue = row[@"status"] ?: @"";
     status.textColor = [row[@"error"] boolValue]
         ? NSColor.systemRedColor
-        : (enabled ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor);
+        : (enabled ? SBMagicalMutedColor() : NSColor.tertiaryLabelColor);
 
     NSControl *affordance = binding[@"affordance"];
     SBNativeControlTarget *target = binding[@"target"];
@@ -1713,8 +1988,10 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         target.timed = !momentary && [row[@"timed"] boolValue] && !active;
     } else if ([affordance isKindOfClass:NSButton.class]) {
         NSButton *button = (NSButton *)affordance;
-        button.title = row[@"actionLabel"] ?: @"";
+        NSString *buttonTitle = row[@"actionLabel"] ?: @"";
         button.enabled = enabled && !busy;
+        SBStyleMagicalSecondaryButton(button, buttonTitle,
+                                      SBMagicalRoundedFont(12.0, NSFontWeightSemibold), busy);
         target.actionName = @"activate";
         target.timed = NO;
     }
@@ -1854,7 +2131,9 @@ static NSTextField *SBPreferencesLabel(NSString *value, NSColor *color) {
     NSTextField *label = [NSTextField labelWithString:value ?: @""];
     label.font = [NSFont systemFontOfSize:NSFont.systemFontSize
                                    weight:NSFontWeightRegular];
-    label.textColor = color ?: NSColor.labelColor;
+    if (color == nil || [color isEqual:NSColor.labelColor]) label.textColor = SBMagicalTextColor();
+    else if ([color isEqual:NSColor.secondaryLabelColor]) label.textColor = SBMagicalMutedColor();
+    else label.textColor = color;
     label.lineBreakMode = NSLineBreakByTruncatingTail;
     return label;
 }
@@ -1863,7 +2142,7 @@ static NSTextField *SBPreferencesSecondaryLabel(NSString *value) {
     NSTextField *label = [NSTextField wrappingLabelWithString:value ?: @""];
     label.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize
                                    weight:NSFontWeightRegular];
-    label.textColor = NSColor.secondaryLabelColor;
+    label.textColor = SBMagicalMutedColor();
     label.maximumNumberOfLines = 0;
     return label;
 }
@@ -1873,7 +2152,7 @@ static NSImageView *SBPreferencesSymbolView(NSString *symbolName) {
     imageView.translatesAutoresizingMaskIntoConstraints = NO;
     imageView.image = SBSymbol(symbolName ?: @"circle", 15.0, NSFontWeightRegular);
     imageView.imageScaling = NSImageScaleProportionallyDown;
-    imageView.contentTintColor = NSColor.secondaryLabelColor;
+    imageView.contentTintColor = SBMagicalMutedColor();
     [imageView.widthAnchor constraintEqualToConstant:24.0].active = YES;
     [imageView.heightAnchor constraintEqualToConstant:24.0].active = YES;
     return imageView;
@@ -1915,6 +2194,7 @@ static const CGFloat SBNativePreferencesAboutHeight = 244.0;
 static const CGFloat SBNativePreferencesHorizontalInset = 20.0;
 static const CGFloat SBNativePreferencesRowHeight = 34.0;
 static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
+static const CGFloat SBNativePreferencesInputHeight = 28.0;
 
 - (instancetype)init {
     self = [super init];
@@ -1994,10 +2274,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSViewController *)generalController {
     NSDictionary *strings = self.strings;
     NSViewController *controller = [NSViewController new];
-    NSView *root = [NSView new];
+    NSView *root = [SBMagicalBackdropView new];
     controller.view = root;
 
-    self.languagePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.languagePopup = [[SBMagicalPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.languagePopup.controlSize = NSControlSizeRegular;
     [self.languagePopup addItemWithTitle:@"简体中文"];
     self.languagePopup.lastItem.representedObject = @"zh";
@@ -2005,7 +2285,11 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.languagePopup.lastItem.representedObject = @"en";
     self.languagePopup.target = self;
     self.languagePopup.action = @selector(languageChanged:);
+    self.languagePopup.bezelColor = SBMagicalInputColor();
+    self.languagePopup.contentTintColor = SBMagicalTextColor();
     [self.languagePopup.widthAnchor constraintEqualToConstant:184.0].active = YES;
+    [self.languagePopup.heightAnchor constraintEqualToConstant:
+        SBNativePreferencesInputHeight].active = YES;
 
     self.loginSwitch = [NSSwitch new];
     self.loginSwitch.controlSize = NSControlSizeSmall;
@@ -2032,6 +2316,8 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     grid.columnSpacing = 14.0;
     [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
     [grid columnAtIndex:1].xPlacement = NSGridCellPlacementLeading;
+    [grid rowAtIndex:0].yPlacement = NSGridCellPlacementCenter;
+    [grid rowAtIndex:1].yPlacement = NSGridCellPlacementCenter;
     [root addSubview:grid];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -2053,6 +2339,8 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
     table.allowsEmptySelection = YES;
     table.usesAlternatingRowBackgroundColors = NO;
+    table.backgroundColor = NSColor.clearColor;
+    table.gridColor = SBMagicalEdgeColor();
     table.intercellSpacing = NSMakeSize(0.0, 2.0);
     if (@available(macOS 11.0, *)) table.style = NSTableViewStyleInset;
     return table;
@@ -2061,7 +2349,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSViewController *)customiseController {
     NSDictionary *strings = self.strings;
     NSViewController *controller = [NSViewController new];
-    NSView *root = [NSView new];
+    NSView *root = [SBMagicalBackdropView new];
     controller.view = root;
 
     self.customiseIntroLabel =
@@ -2081,6 +2369,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.customSearchField.sendsSearchStringImmediately = YES;
     self.customSearchField.target = self;
     self.customSearchField.action = @selector(filterChanged:);
+    self.customSearchField.textColor = SBMagicalTextColor();
+    self.customSearchField.backgroundColor = SBMagicalInputColor();
+    [self.customSearchField.heightAnchor constraintEqualToConstant:
+        SBNativePreferencesInputHeight].active = YES;
     [root addSubview:self.customSearchField];
 
     NSScrollView *scroll = [NSScrollView new];
@@ -2122,7 +2414,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSViewController *)shortcutsController {
     NSDictionary *strings = self.strings;
     NSViewController *controller = [NSViewController new];
-    NSView *root = [NSView new];
+    NSView *root = [SBMagicalBackdropView new];
     controller.view = root;
 
     self.shortcutIntroLabel =
@@ -2137,6 +2429,10 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.shortcutSearchField.sendsSearchStringImmediately = YES;
     self.shortcutSearchField.target = self;
     self.shortcutSearchField.action = @selector(filterChanged:);
+    self.shortcutSearchField.textColor = SBMagicalTextColor();
+    self.shortcutSearchField.backgroundColor = SBMagicalInputColor();
+    [self.shortcutSearchField.heightAnchor constraintEqualToConstant:
+        SBNativePreferencesInputHeight].active = YES;
     [root addSubview:self.shortcutSearchField];
 
     NSScrollView *scroll = [NSScrollView new];
@@ -2182,7 +2478,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSViewController *)aboutController {
     NSDictionary *strings = self.strings;
     NSViewController *controller = [NSViewController new];
-    NSView *root = [NSView new];
+    NSView *root = [SBMagicalBackdropView new];
     controller.view = root;
 
     NSStackView *stack = [NSStackView new];
@@ -2197,29 +2493,34 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     identityStack.alignment = NSLayoutAttributeCenterX;
     identityStack.spacing = 4.0;
 
-    NSImageView *mark = [NSImageView new];
+    SBMagicalCrestImageView *mark = [SBMagicalCrestImageView new];
     mark.translatesAutoresizingMaskIntoConstraints = NO;
-    mark.image = NSApplication.sharedApplication.applicationIconImage;
+    [mark refreshForAppearance];
     mark.imageScaling = NSImageScaleProportionallyUpOrDown;
     [mark.widthAnchor constraintEqualToConstant:56.0].active = YES;
     [mark.heightAnchor constraintEqualToConstant:56.0].active = YES;
     self.aboutTitleLabel = SBPreferencesLabel(strings[@"aboutTitle"] ?: @"OneTouch",
-                                              NSColor.labelColor);
-    self.aboutTitleLabel.font =
-        [NSFont systemFontOfSize:18.0 weight:NSFontWeightMedium];
+                                              SBMagicalTextColor());
+    self.aboutTitleLabel.font = SBMagicalRoundedFont(18.0, NSFontWeightSemibold);
     self.aboutVersion = SBPreferencesLabel(@"", NSColor.secondaryLabelColor);
-    self.aboutGitHubButton = [NSButton buttonWithTitle:strings[@"github"] ?: @"GitHub"
-                                                target:self
-                                                action:@selector(openAboutGitHub:)];
+    self.aboutGitHubButton = [[SBMagicalHoverButton alloc] initWithFrame:NSZeroRect];
+    self.aboutGitHubButton.title = strings[@"github"] ?: @"GitHub";
+    self.aboutGitHubButton.target = self;
+    self.aboutGitHubButton.action = @selector(openAboutGitHub:);
     self.aboutGitHubButton.bezelStyle = NSBezelStyleAccessoryBarAction;
     self.aboutGitHubButton.controlSize = NSControlSizeSmall;
+    self.aboutGitHubButton.font = SBMagicalRoundedFont(11.0, NSFontWeightSemibold);
+    self.aboutGitHubButton.contentTintColor = SBMagicalPrimaryColor();
     self.aboutGitHubButton.showsBorderOnlyWhileMouseInside = YES;
     self.aboutGitHubButton.enabled = NO;
-    self.aboutXButton = [NSButton buttonWithTitle:strings[@"x"] ?: @"X"
-                                           target:self
-                                           action:@selector(openAboutX:)];
+    self.aboutXButton = [[SBMagicalHoverButton alloc] initWithFrame:NSZeroRect];
+    self.aboutXButton.title = strings[@"x"] ?: @"X";
+    self.aboutXButton.target = self;
+    self.aboutXButton.action = @selector(openAboutX:);
     self.aboutXButton.bezelStyle = NSBezelStyleAccessoryBarAction;
     self.aboutXButton.controlSize = NSControlSizeSmall;
+    self.aboutXButton.font = SBMagicalRoundedFont(11.0, NSFontWeightSemibold);
+    self.aboutXButton.contentTintColor = SBMagicalPrimaryColor();
     self.aboutXButton.showsBorderOnlyWhileMouseInside = YES;
     self.aboutXButton.enabled = NO;
 
@@ -2235,6 +2536,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
                                                  action:@selector(checkForUpdates:)];
     self.aboutUpdateButton.bezelStyle = NSBezelStyleRounded;
     self.aboutUpdateButton.controlSize = NSControlSizeRegular;
+    SBStyleMagicalSecondaryButton(self.aboutUpdateButton,
+                                  strings[@"checkForUpdates"] ?: @"Check for Updates",
+                                  SBMagicalRoundedFont(12.0, NSFontWeightSemibold), NO);
     self.aboutUpdateStatus = SBPreferencesSecondaryLabel(@"");
     self.aboutUpdateStatus.alignment = NSTextAlignmentCenter;
     self.aboutUpdateStatus.hidden = YES;
@@ -2365,7 +2669,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     self.loginNote.stringValue =
         error.length > 0 ? error : (self.strings[@"startAtLoginNote"] ?: @"");
     self.loginNote.textColor =
-        error.length > 0 ? NSColor.systemRedColor : NSColor.secondaryLabelColor;
+        error.length > 0 ? NSColor.systemRedColor : SBMagicalMutedColor();
 }
 
 - (void)updateShortcutHint {
@@ -2375,7 +2679,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         message.length > 0 ? message : (self.strings[@"shortcutHint"] ?: @"");
     self.shortcutHint.textColor = [self.model[@"shortcutMessageError"] boolValue]
         ? NSColor.systemRedColor
-        : NSColor.secondaryLabelColor;
+        : SBMagicalMutedColor();
 }
 
 - (NSArray<NSDictionary *> *)rowsForTable:(NSTableView *)tableView {
@@ -2453,10 +2757,14 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     NSString *updateStatus = [update[@"status"] isKindOfClass:NSString.class]
         ? update[@"status"]
         : @"";
-    self.aboutUpdateButton.title = updateTitle;
+    BOOL updateBusy = [@[@"checking", @"downloading", @"installing", @"restarting"]
+        containsObject:phase];
+    SBStyleMagicalSecondaryButton(self.aboutUpdateButton, updateTitle,
+                                  SBMagicalRoundedFont(12.0, NSFontWeightSemibold),
+                                  updateBusy);
     self.aboutUpdateButton.enabled =
         ![update[@"disabled"] boolValue] &&
-        ![@[@"checking", @"downloading", @"installing", @"restarting"] containsObject:phase];
+        !updateBusy;
     self.aboutUpdateStatus.stringValue = updateStatus;
     self.aboutUpdateStatus.hidden = updateStatus.length == 0;
     [self updatePreferencesWindowTitle];
@@ -2469,6 +2777,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSView *)customCellForRow:(NSDictionary *)row {
     NSTableCellView *cell = [NSTableCellView new];
     NSImageView *icon = SBPreferencesSymbolView(row[@"symbol"]);
+    icon.contentTintColor = SBMagicalPrimaryColor();
     [cell addSubview:icon];
 
     NSTextField *title = SBPreferencesLabel(row[@"title"], NSColor.labelColor);
@@ -2490,6 +2799,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
                                               action:@selector(visibilityChanged:)];
     checkbox.translatesAutoresizingMaskIntoConstraints = NO;
     checkbox.controlSize = NSControlSizeSmall;
+    checkbox.contentTintColor = SBMagicalPrimaryColor();
     checkbox.identifier = row[@"id"] ?: @"";
     checkbox.state = [row[@"visible"] boolValue]
         ? NSControlStateValueOn
@@ -2523,6 +2833,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
 - (NSView *)shortcutCellForRow:(NSDictionary *)row {
     NSTableCellView *cell = [NSTableCellView new];
     NSImageView *icon = SBPreferencesSymbolView(row[@"symbol"]);
+    icon.contentTintColor = SBMagicalPrimaryColor();
     [cell addSubview:icon];
     NSTextField *title = SBPreferencesLabel(row[@"title"], NSColor.labelColor);
     title.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2541,6 +2852,9 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
     record.identifier = controlID;
     record.bezelStyle = NSBezelStyleRounded;
     record.controlSize = NSControlSizeSmall;
+    SBStyleMagicalSecondaryButton(record, record.title,
+                                  SBMagicalRoundedFont(11.0, NSFontWeightSemibold),
+                                  recording);
     [cell addSubview:record];
 
     // Do not reserve layout space for an invisible clear button. Empty
@@ -2554,6 +2868,7 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         clear.image = SBSymbol(@"xmark", 11.0, NSFontWeightRegular);
         clear.imagePosition = NSImageOnly;
         clear.bezelStyle = NSBezelStyleAccessoryBarAction;
+        clear.contentTintColor = SBMagicalMutedColor();
         clear.showsBorderOnlyWhileMouseInside = YES;
         clear.toolTip = self.strings[@"shortcutClear"] ?: @"Clear shortcut";
         clear.target = self;
@@ -3058,9 +3373,11 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
                                            defer:NO];
         window.title = @"通用";
         window.titleVisibility = NSWindowTitleVisible;
+        window.titlebarAppearsTransparent = YES;
         window.tabbingMode = NSWindowTabbingModeDisallowed;
         window.releasedWhenClosed = NO;
         window.animationBehavior = NSWindowAnimationBehaviorDocumentWindow;
+        window.backgroundColor = SBMagicalPreferencesCanvasColor();
         window.delegate = controller;
         if (@available(macOS 11.0, *)) {
             // Preference is AppKit's dedicated Settings-window layout: it keeps

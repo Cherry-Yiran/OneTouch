@@ -14,6 +14,448 @@
   --ease: .25s cubic-bezier(.25,0,0,1);
 }
 
+/* Peach Star Magic — the visual source of truth lives in ../design.md. */
+:root {
+  --magic-canvas: #241a35;
+  --magic-surface: #332442;
+  --magic-surface-raised: #49304f;
+  --magic-surface-soft: #3d2a49;
+  --magic-primary: #ff84b1;
+  --magic-primary-strong: #f568a1;
+  --magic-secondary: #c8b2ff;
+  --magic-gold: #e5b85e;
+  --magic-text: #fff2f7;
+  --magic-body: #e7d5e3;
+  --magic-muted: #b99fb4;
+  --magic-edge: rgba(255,210,230,.22);
+  --magic-edge-strong: rgba(255,210,230,.36);
+  --magic-error: #ff6f89;
+  --magic-success: #f0ad66;
+  --magic-panel-gradient: linear-gradient(155deg, rgba(51,36,66,.98), rgba(36,26,53,.97));
+  --magic-raised-gradient: linear-gradient(145deg, #583859 0%, #49304f 56%, #392842 100%);
+  --magic-active-gradient: linear-gradient(145deg, #ff9bc0 0%, #ff84b1 48%, #c8b2ff 100%);
+  --magic-shadow: 0 1px 0 rgba(255,255,255,.2) inset, 0 10px 28px rgba(13,7,24,.36);
+  --magic-shadow-soft: 0 1px 0 rgba(255,255,255,.16) inset, 0 7px 18px rgba(13,7,24,.24);
+  --magic-focus: 0 0 0 2px var(--magic-canvas), 0 0 0 4px var(--magic-primary);
+  --magic-rounded: ui-rounded, "SF Pro Rounded", "PingFang SC", ui-sans-serif, system-ui, sans-serif;
+  --lime: var(--magic-primary);
+  --muted: var(--magic-muted);
+  --quiet: rgba(231,213,227,.42);
+  --hairline: var(--magic-edge);
+  --hairline-strong: var(--magic-edge-strong);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --magic-canvas: #fff8f2;
+    --magic-surface: #fffdf9;
+    --magic-surface-raised: #fff1f4;
+    --magic-surface-soft: #fff7f7;
+    --magic-primary: #f778a5;
+    --magic-primary-strong: #e95e92;
+    --magic-secondary: #ffaa78;
+    --magic-gold: #f6c867;
+    --magic-text: #573846;
+    --magic-body: #745563;
+    --magic-muted: #a2808d;
+    --magic-edge: #f2ccd5;
+    --magic-edge-strong: #eeb5c4;
+    --magic-error: #d94763;
+    --magic-success: #e89a48;
+    --magic-panel-gradient: linear-gradient(155deg, rgba(255,253,249,.99), rgba(255,238,243,.97));
+    --magic-raised-gradient: linear-gradient(145deg, #fffdf9 0%, #fff0f4 58%, #ffe1d5 100%);
+    --magic-active-gradient: linear-gradient(145deg, #ffb6cb 0%, #f778a5 48%, #ffaa78 100%);
+    --magic-shadow: 0 1px 0 rgba(255,255,255,.82) inset, 0 8px 22px rgba(178,92,124,.16);
+    --magic-shadow-soft: 0 1px 0 rgba(255,255,255,.78) inset, 0 6px 16px rgba(178,92,124,.12);
+    --magic-focus: 0 0 0 2px #fff8f2, 0 0 0 4px var(--magic-primary);
+  }
+}
+
+body {
+  color: var(--magic-text);
+  background: var(--magic-canvas);
+}
+
+.status-app {
+  background:
+    radial-gradient(circle at 18% 14%, color-mix(in srgb, var(--magic-primary) 24%, transparent), transparent 25rem),
+    radial-gradient(circle at 78% 72%, color-mix(in srgb, var(--magic-secondary) 22%, transparent), transparent 28rem),
+    var(--magic-canvas);
+}
+
+.mac-stage {
+  border-color: var(--magic-edge);
+  background: var(--magic-surface);
+  box-shadow: var(--magic-shadow), 0 32px 90px color-mix(in srgb, var(--magic-primary) 14%, rgba(0,0,0,.5));
+}
+
+.wallpaper-art {
+  background:
+    radial-gradient(circle at 72% 20%, color-mix(in srgb, var(--magic-primary) 42%, transparent), transparent 24%),
+    radial-gradient(circle at 21% 78%, color-mix(in srgb, var(--magic-gold) 24%, transparent), transparent 28%),
+    linear-gradient(138deg, var(--magic-canvas), var(--magic-surface) 42%, var(--magic-surface-soft));
+}
+
+.wallpaper-art::before {
+  background:
+    radial-gradient(ellipse at 46% 58%, color-mix(in srgb, var(--magic-gold) 30%, transparent), transparent 34%),
+    linear-gradient(118deg, transparent 37%, color-mix(in srgb, var(--magic-primary) 44%, transparent) 39% 47%, transparent 49%);
+}
+
+.wallpaper-art::after {
+  background:
+    radial-gradient(ellipse at 38% 33%, color-mix(in srgb, var(--magic-secondary) 46%, transparent), transparent 42%),
+    linear-gradient(32deg, transparent 38%, color-mix(in srgb, var(--magic-primary) 24%, transparent) 40% 48%, transparent 50%);
+}
+
+.menu-bar {
+  border-bottom-color: var(--magic-edge);
+  background: color-mix(in srgb, var(--magic-surface) 76%, transparent);
+  color: var(--magic-text);
+}
+
+.menu-left span:not(.apple-mark),
+.menu-right { color: var(--magic-muted); }
+.apple-mark { color: var(--magic-primary); }
+.tray-trigger:hover,
+.tray-trigger:focus-visible {
+  border-color: var(--magic-edge-strong);
+  background: color-mix(in srgb, var(--magic-primary) 14%, transparent);
+  color: var(--magic-primary);
+}
+
+.status-popover,
+.native-popover-shell .status-popover {
+  border-color: var(--magic-edge);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+  box-shadow: var(--magic-shadow), 0 22px 54px color-mix(in srgb, var(--magic-primary) 18%, rgba(0,0,0,.42));
+  -webkit-backdrop-filter: blur(42px) saturate(1.18);
+  backdrop-filter: blur(42px) saturate(1.18);
+}
+
+.native-popover-shell {
+  --muted: var(--magic-muted);
+  --quiet: color-mix(in srgb, var(--magic-muted) 62%, transparent);
+  --hairline: var(--magic-edge);
+  --hairline-strong: var(--magic-edge-strong);
+  color: var(--magic-text);
+}
+
+.popover-head {
+  min-height: 66px;
+  padding: 10px 16px;
+  border-bottom-color: var(--magic-edge);
+  background:
+    radial-gradient(circle at 18% 50%, color-mix(in srgb, var(--magic-gold) 14%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, white 12%, transparent), transparent);
+}
+
+.app-identity { gap: 12px; }
+.app-mark {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+.app-crest {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 8px color-mix(in srgb, var(--magic-primary) 24%, transparent));
+}
+.crest-light { display: none; }
+.crest-dark { display: block; }
+@media (prefers-color-scheme: light) {
+  .crest-light { display: block; }
+  .crest-dark { display: none; }
+}
+.app-identity strong {
+  color: var(--magic-text);
+  font-family: var(--magic-rounded);
+  font-size: 14px;
+  font-weight: 650;
+}
+.app-identity small { color: var(--magic-muted); }
+
+.switch-list { scrollbar-color: color-mix(in srgb, var(--magic-primary) 32%, transparent) transparent; }
+.switch-row {
+  color: var(--magic-body);
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.switch-row:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 10%, transparent), transparent 82%);
+}
+.switch-row.is-active {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 14%, transparent), transparent 88%);
+}
+.switch-row.is-active::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  width: 2px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--magic-gold);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--magic-gold) 48%, transparent);
+}
+.switch-copy strong,
+.native-popover-shell .switch-copy strong {
+  color: var(--magic-text);
+  font-weight: 500;
+}
+.switch-copy small,
+.native-popover-shell .switch-copy small { color: var(--magic-muted); }
+.switch-icon,
+.native-popover-shell .switch-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--magic-edge);
+  border-radius: 10px;
+  background: var(--magic-raised-gradient);
+  color: var(--magic-muted);
+  box-shadow: var(--magic-shadow-soft);
+}
+.switch-row.is-active .switch-icon {
+  border-color: color-mix(in srgb, var(--magic-gold) 58%, var(--magic-edge));
+  background: var(--magic-active-gradient);
+  color: #fffaf8;
+  box-shadow: 0 1px 0 rgba(255,255,255,.48) inset, 0 0 16px color-mix(in srgb, var(--magic-primary) 28%, transparent);
+}
+
+.toggle,
+.native-popover-shell .toggle {
+  border: 1px solid var(--magic-edge-strong);
+  background: var(--magic-raised-gradient);
+  box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 4px 10px color-mix(in srgb, var(--magic-primary) 14%, transparent);
+}
+.toggle span,
+.native-popover-shell .toggle span {
+  background: var(--magic-surface);
+  box-shadow: 0 1px 0 rgba(255,255,255,.72) inset, 0 2px 5px rgba(85,38,62,.22);
+}
+.toggle.is-on,
+.native-popover-shell .toggle.is-on {
+  border-color: color-mix(in srgb, var(--magic-gold) 62%, var(--magic-primary));
+  background: var(--magic-active-gradient);
+  box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 0 18px color-mix(in srgb, var(--magic-primary) 30%, transparent);
+}
+.toggle.is-on span,
+.native-popover-shell .toggle.is-on span { background: #fffaf8; }
+.toggle:focus-visible,
+.row-action:focus-visible,
+.foot-icon:focus-visible,
+.customise:focus-visible { outline: none; box-shadow: var(--magic-focus); }
+
+.popover-foot {
+  border-top-color: var(--magic-edge);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--magic-primary) 8%, transparent));
+}
+.foot-icon,
+.customise,
+.native-popover-shell .customise {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--magic-muted);
+}
+.foot-icon:hover,
+.customise:hover,
+.native-popover-shell .customise:hover,
+.native-popover-shell .foot-icon:hover {
+  border-color: var(--magic-edge);
+  background: var(--magic-raised-gradient);
+  color: var(--magic-primary);
+  box-shadow: var(--magic-shadow-soft);
+}
+.power:hover { color: var(--magic-error); }
+.new-feature-dot { background: var(--magic-gold); box-shadow: 0 0 10px color-mix(in srgb, var(--magic-gold) 55%, transparent); }
+
+.preferences-window,
+.native-preferences-shell .preferences-window {
+  border-color: var(--magic-edge);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+  box-shadow: var(--magic-shadow), 0 32px 88px color-mix(in srgb, var(--magic-primary) 18%, rgba(0,0,0,.4));
+}
+.preferences-window::before {
+  opacity: .55;
+  background-image:
+    radial-gradient(color-mix(in srgb, var(--magic-gold) 45%, transparent) .6px, transparent .7px),
+    radial-gradient(circle at 82% 16%, color-mix(in srgb, var(--magic-primary) 20%, transparent), transparent 23%),
+    radial-gradient(circle at 17% 90%, color-mix(in srgb, var(--magic-secondary) 22%, transparent), transparent 28%);
+}
+.preferences-titlebar,
+.preferences-tabs {
+  border-color: var(--magic-edge);
+  background: linear-gradient(180deg, color-mix(in srgb, white 8%, transparent), transparent);
+}
+.preferences-tabs button { color: var(--magic-muted); }
+.preferences-tabs button:hover {
+  color: var(--magic-text);
+  background: color-mix(in srgb, var(--magic-primary) 8%, transparent);
+}
+.preferences-tabs button.is-active {
+  border-color: color-mix(in srgb, var(--magic-primary) 34%, var(--magic-edge));
+  background: var(--magic-raised-gradient);
+  color: var(--magic-primary);
+  box-shadow: var(--magic-shadow-soft);
+}
+.preferences-tabs button.is-active svg { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--magic-primary) 38%, transparent)); }
+.pref-panel,
+.general-panel,
+.custom-panel,
+.hotkey-panel,
+.about-panel { color: var(--magic-body); }
+.pref-lead,
+.general-row small,
+.shortcut-hint,
+.about-panel p { color: var(--magic-muted); }
+.general-row,
+.hotkey-row { border-color: var(--magic-edge); }
+.select-trigger,
+.record-button,
+.pref-button,
+.custom-capacity {
+  border-color: var(--magic-edge);
+  background: var(--magic-raised-gradient);
+  color: var(--magic-body);
+  box-shadow: var(--magic-shadow-soft);
+}
+.select-trigger:hover,
+.record-button:hover,
+.pref-button:hover {
+  border-color: var(--magic-primary);
+  color: var(--magic-primary);
+}
+.custom-list {
+  border-color: var(--magic-edge);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--magic-surface) 72%, transparent);
+  box-shadow: var(--magic-shadow-soft);
+}
+.custom-row { border-bottom-color: color-mix(in srgb, var(--magic-edge) 64%, transparent); color: var(--magic-body); }
+.custom-row:hover { background: color-mix(in srgb, var(--magic-primary) 8%, transparent); color: var(--magic-text); }
+.custom-row.is-selected,
+.custom-row.is-dragging {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 18%, transparent), transparent);
+  color: var(--magic-text);
+  box-shadow: inset 2px 0 0 var(--magic-gold);
+}
+.custom-row-copy small { color: var(--magic-primary); }
+.drag-handle { color: var(--magic-muted); }
+.custom-row:hover .drag-handle,
+.drag-handle:focus-visible { background: color-mix(in srgb, var(--magic-primary) 10%, transparent); color: var(--magic-primary); }
+.square-check.is-checked,
+.drag-preview-check.is-checked {
+  border-color: var(--magic-gold);
+  background: var(--magic-active-gradient);
+  color: #fffaf8;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--magic-primary) 28%, transparent);
+}
+.about-mark {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+.about-mark .app-crest { filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--magic-primary) 30%, transparent)); }
+.about-panel h2,
+.about-info > span { color: var(--magic-text); }
+.eyebrow,
+.about-info strong { color: var(--magic-primary); }
+.about-rule { background: var(--magic-edge); }
+
+.resolution-panel,
+.disk-panel,
+.native-popover-shell .resolution-panel,
+.native-popover-shell .disk-panel {
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+}
+.resolution-panel-head,
+.disk-panel-head,
+.resolution-displays,
+.disk-option,
+.timer-popover-option.is-indefinite { border-color: var(--magic-edge); }
+.resolution-panel-head strong,
+.disk-panel-head strong,
+.resolution-mode-copy strong,
+.disk-option > span:first-child strong { color: var(--magic-text); }
+.resolution-panel-head small,
+.disk-panel-head small,
+.resolution-mode-copy small,
+.disk-option > span:first-child small,
+.resolution-state,
+.disk-panel-state { color: var(--magic-muted); }
+.resolution-back,
+.disk-back,
+.resolution-displays button,
+.resolution-options > button,
+.disk-option { color: var(--magic-body); }
+.resolution-back:hover,
+.disk-back:hover,
+.resolution-options > button:hover,
+.disk-option:hover { background: color-mix(in srgb, var(--magic-primary) 9%, transparent); color: var(--magic-text); }
+.resolution-displays button {
+  border-color: var(--magic-edge);
+  background: var(--magic-raised-gradient);
+}
+.resolution-displays button.is-selected,
+.resolution-options > button.is-current,
+.disk-option.is-protected {
+  border-color: color-mix(in srgb, var(--magic-primary) 46%, var(--magic-edge));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 16%, transparent), transparent);
+  color: var(--magic-primary);
+}
+.timer-popover,
+.native-popover-shell .timer-popover {
+  border-color: var(--magic-edge-strong);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+  box-shadow: var(--magic-shadow);
+}
+.timer-popover-label { color: var(--magic-muted); }
+.timer-popover-option { color: var(--magic-body); }
+.timer-popover-option:hover,
+.timer-popover-option:focus-visible { background: color-mix(in srgb, var(--magic-primary) 11%, transparent); color: var(--magic-text); }
+.resolution-error,
+.disk-panel-error,
+.switch-row.has-error .switch-copy small { color: var(--magic-error); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .status-popover,
+  .native-popover-shell .status-popover,
+  .preferences-window,
+  .native-preferences-shell .preferences-window,
+  .resolution-panel,
+  .disk-panel,
+  .timer-popover { background: var(--magic-surface); }
+}
+
+@media (prefers-contrast: more) {
+  :root { --magic-edge: currentColor; --magic-edge-strong: currentColor; }
+  .switch-copy strong,
+  .switch-copy small { font-weight: 600; }
+  .toggle,
+  .row-action,
+  .switch-icon { border-width: 2px; }
+  .toggle:focus-visible,
+  .row-action:focus-visible,
+  .foot-icon:focus-visible,
+  .customise:focus-visible { box-shadow: 0 0 0 3px var(--magic-primary); }
+}
+
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; overflow-x: hidden; background: #09090b; }
@@ -1019,3 +1461,215 @@ html[data-native-view="popover"], html[data-native-view="preferences"], html[dat
   .native-popover-shell .disk-option.is-protected > span:first-child small { color: rgba(88,118,0,.72); }
   .native-popover-shell .disk-panel-error { color: rgba(172,37,28,.9); }
 }
+
+/* Cascade gate: keep Peach Star Magic authoritative over legacy preview fallbacks. */
+:root {
+  --lime: var(--magic-primary);
+  --muted: var(--magic-muted);
+  --quiet: color-mix(in srgb, var(--magic-muted) 58%, transparent);
+  --hairline: var(--magic-edge);
+  --hairline-strong: var(--magic-edge-strong);
+}
+body,
+.status-app { color: var(--magic-text); background-color: var(--magic-canvas); }
+.status-popover,
+.native-popover-shell .status-popover {
+  border-color: var(--magic-edge);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+  box-shadow: var(--magic-shadow), 0 22px 54px color-mix(in srgb, var(--magic-primary) 18%, rgba(0,0,0,.42));
+}
+.native-popover-shell {
+  --muted: var(--magic-muted);
+  --quiet: color-mix(in srgb, var(--magic-muted) 58%, transparent);
+  --hairline: var(--magic-edge);
+  --hairline-strong: var(--magic-edge-strong);
+  color: var(--magic-text);
+}
+.native-popover-shell .popover-head,
+.native-popover-shell .popover-foot { background: transparent; }
+.popover-head {
+  min-height: 66px;
+  border-bottom-color: var(--magic-edge);
+  background: linear-gradient(180deg, color-mix(in srgb, white 10%, transparent), transparent);
+}
+.app-mark,
+.native-popover-shell .app-mark {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.app-identity strong,
+.native-popover-shell .app-identity strong,
+.switch-copy strong,
+.native-popover-shell .switch-copy strong { color: var(--magic-text); }
+.app-identity small,
+.switch-copy small,
+.native-popover-shell .switch-copy small { color: var(--magic-muted); }
+.switch-row:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 10%, transparent), transparent 82%); }
+.switch-row.is-active { background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 14%, transparent), transparent 88%); }
+.switch-icon,
+.native-popover-shell .switch-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--magic-edge);
+  border-radius: 10px;
+  background: var(--magic-raised-gradient);
+  color: var(--magic-muted);
+  box-shadow: var(--magic-shadow-soft);
+}
+.switch-row.is-active .switch-icon,
+.native-popover-shell .switch-row.is-active .switch-icon {
+  border-color: color-mix(in srgb, var(--magic-gold) 58%, var(--magic-edge));
+  background: var(--magic-active-gradient);
+  color: #fffaf8;
+  box-shadow: 0 1px 0 rgba(255,255,255,.48) inset, 0 0 16px color-mix(in srgb, var(--magic-primary) 28%, transparent);
+}
+.toggle,
+.native-popover-shell .toggle {
+  border-color: var(--magic-edge-strong);
+  background: var(--magic-raised-gradient);
+  box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 4px 10px color-mix(in srgb, var(--magic-primary) 14%, transparent);
+}
+.toggle span,
+.native-popover-shell .toggle span {
+  background: var(--magic-surface);
+  box-shadow: 0 1px 0 rgba(255,255,255,.72) inset, 0 2px 5px rgba(85,38,62,.22);
+}
+.toggle.is-on,
+.native-popover-shell .toggle.is-on {
+  border-color: color-mix(in srgb, var(--magic-gold) 62%, var(--magic-primary));
+  background: var(--magic-active-gradient);
+  box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 0 18px color-mix(in srgb, var(--magic-primary) 30%, transparent);
+}
+.toggle.is-on span,
+.native-popover-shell .toggle.is-on span { background: #fffaf8; }
+.popover-foot {
+  border-top-color: var(--magic-edge);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--magic-primary) 8%, transparent));
+}
+.customise,
+.native-popover-shell .customise,
+.foot-icon {
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--magic-muted);
+  box-shadow: none;
+}
+.customise:hover,
+.native-popover-shell .customise:hover,
+.foot-icon:hover,
+.native-popover-shell .foot-icon:hover {
+  border-color: var(--magic-edge);
+  background: var(--magic-raised-gradient);
+  color: var(--magic-primary);
+  box-shadow: var(--magic-shadow-soft);
+}
+.toggle:focus-visible,
+.row-action:focus-visible,
+.foot-icon:focus-visible,
+.customise:focus-visible {
+  outline: none;
+  box-shadow: var(--magic-focus);
+}
+.preferences-window,
+.native-preferences-shell .preferences-window {
+  border-color: var(--magic-edge);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+  box-shadow: var(--magic-shadow), 0 32px 88px color-mix(in srgb, var(--magic-primary) 18%, rgba(0,0,0,.4));
+}
+.preferences-tabs {
+  border-bottom-color: var(--magic-edge);
+  background: linear-gradient(180deg, color-mix(in srgb, white 8%, transparent), transparent);
+}
+.preferences-tabs button { color: var(--magic-muted); }
+.preferences-tabs button:hover { color: var(--magic-text); background: color-mix(in srgb, var(--magic-primary) 8%, transparent); }
+.preferences-tabs button.is-active {
+  border-color: color-mix(in srgb, var(--magic-primary) 34%, var(--magic-edge));
+  background: var(--magic-raised-gradient);
+  color: var(--magic-primary);
+  box-shadow: var(--magic-shadow-soft);
+}
+.pref-lead,
+.general-row small,
+.shortcut-hint,
+.about-panel p { color: var(--magic-muted); }
+.general-row,
+.hotkey-row,
+.about-rule { border-color: var(--magic-edge); }
+.select-trigger,
+.record-button,
+.pref-button,
+.custom-capacity {
+  border-color: var(--magic-edge);
+  background: var(--magic-raised-gradient);
+  color: var(--magic-body);
+  box-shadow: var(--magic-shadow-soft);
+}
+.custom-list {
+  border-color: var(--magic-edge);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--magic-surface) 78%, transparent);
+  box-shadow: var(--magic-shadow-soft);
+}
+.custom-row { border-bottom-color: color-mix(in srgb, var(--magic-edge) 64%, transparent); color: var(--magic-body); }
+.custom-row:hover { background: color-mix(in srgb, var(--magic-primary) 8%, transparent); color: var(--magic-text); }
+.custom-row.is-selected,
+.custom-row.is-dragging {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 18%, transparent), transparent);
+  color: var(--magic-text);
+  box-shadow: inset 2px 0 0 var(--magic-gold);
+}
+.custom-row-copy small,
+.eyebrow,
+.about-info strong { color: var(--magic-primary); }
+.about-mark {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+.about-panel h2,
+.about-info > span { color: var(--magic-text); }
+.resolution-panel,
+.disk-panel,
+.native-popover-shell .resolution-panel,
+.native-popover-shell .disk-panel,
+.timer-popover,
+.native-popover-shell .timer-popover {
+  border-color: var(--magic-edge);
+  background: var(--magic-panel-gradient);
+  color: var(--magic-text);
+}
+.resolution-panel-head strong,
+.disk-panel-head strong,
+.resolution-mode-copy strong,
+.disk-option > span:first-child strong { color: var(--magic-text); }
+.resolution-panel-head small,
+.disk-panel-head small,
+.resolution-mode-copy small,
+.disk-option > span:first-child small,
+.resolution-state,
+.disk-panel-state,
+.timer-popover-label { color: var(--magic-muted); }
+.resolution-displays button.is-selected,
+.resolution-options > button.is-current,
+.disk-option.is-protected {
+  border-color: color-mix(in srgb, var(--magic-primary) 46%, var(--magic-edge));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--magic-primary) 16%, transparent), transparent);
+  color: var(--magic-primary);
+}
+.resolution-error,
+.disk-panel-error,
+.switch-row.has-error .switch-copy small { color: var(--magic-error); }

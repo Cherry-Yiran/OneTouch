@@ -36,7 +36,7 @@
 </p>
 
 <p align="center">
-  OneTouch uses native AppKit panels, controls, typography, colours, and system materials, with automatic light and dark appearance support.
+  OneTouch keeps its native AppKit menu-bar experience and adapts the Peach Star Magic visual language to light and dark appearances.
 </p>
 
 ---
@@ -138,8 +138,10 @@ Build artifacts are written to `src-tauri/target/release/bundle/`. Pushing a `v*
 
 ## Design and implementation
 
-OneTouch uses Apple public AppKit components and semantic system parameters. It does not manually imitate macOS glass, colours, blur levels, button states, or menu behaviour.
+OneTouch uses the Peach Star Magic visual language for its content layer: warm cream and berry-violet themes, pink-peach candy glaze, soft-relief icon medallions, and a winged star crest. Its menu-bar form, system glass shell, switches, menus, toolbar, and window behaviour remain built with Apple public AppKit capabilities.
 
+- [Peach Star Magic design system](design.md)
+- [Interactive design preview](design-preview.html)
 - [Interface principles and layout constraints](docs/DESIGN_PRINCIPLES.md)
 - [Apple component references](docs/APPLE_COMPONENTS.md)
 

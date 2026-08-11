@@ -27,8 +27,8 @@ import {
   Paintbrush,
   Power,
   SlidersHorizontal,
+  Sparkle,
   Sun,
-  ToggleRight,
   Trash2,
   Zap,
 } from 'lucide-react';
@@ -36,6 +36,8 @@ import Preferences, { PREFERENCES_COPY } from './Preferences.jsx';
 import ResolutionPanel from './ResolutionPanel.jsx';
 import TimerPanel from './TimerPanel.jsx';
 import DiskPanel from './DiskPanel.jsx';
+import crestDarkUrl from './assets/magical/crest-dark.png';
+import crestLightUrl from './assets/magical/crest-light.png';
 import {
   CONTROL_KINDS,
   controlKind,
@@ -1713,7 +1715,7 @@ export default function App() {
 
   const popover = (
     <section className="status-popover" aria-label={text.title}>
-      <header className="popover-head" aria-hidden={resolutionPanelOpen || diskPanelOpen}><div className="app-identity"><span className="app-mark"><ToggleRight size={19} /></span><span><strong>{text.title}</strong><small>{text.subtitle}</small></span></div></header>
+      <header className="popover-head" aria-hidden={resolutionPanelOpen || diskPanelOpen}><div className="app-identity"><span className="app-mark"><img className="app-crest crest-light" src={crestLightUrl} alt="" /><img className="app-crest crest-dark" src={crestDarkUrl} alt="" /></span><span><strong>{text.title}</strong></span></div></header>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
       <div className="switch-list" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}>{menuItems.map((item) => {
         const Icon = item.icon;
@@ -1840,7 +1842,7 @@ export default function App() {
         <div className="wallpaper-art" aria-hidden="true"><i /><i /><i /></div>
         <header className="menu-bar">
           <div className="menu-left"><span className="apple-mark">●</span><span>Finder</span><span>File</span><span>Edit</span><span>View</span></div>
-          <div className="menu-right"><span>⌁</span><span>◒</span><span>◖</span><span>100%</span><button type="button" className="tray-trigger" aria-label={isOpen ? text.close : text.open} onClick={() => setIsOpen((value) => !value)}><ToggleRight size={16} /></button></div>
+          <div className="menu-right"><span>⌁</span><span>◒</span><span>◖</span><span>100%</span><button type="button" className="tray-trigger" aria-label={isOpen ? text.close : text.open} onClick={() => setIsOpen((value) => !value)}><Sparkle size={16} /></button></div>
         </header>
         <button type="button" className="ambient-dismiss" aria-label={text.outsideClose} onClick={() => setIsOpen(false)} />
 

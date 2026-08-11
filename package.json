@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "vite build",
+    "theme:assets": "zsh scripts/build-accent-assets.sh",
     "test:ui": "node --test src/*.test.js",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "native:dev": "tauri dev",
-    "native:build": "tauri build",
+    "native:build": "pnpm theme:assets && tauri build",
     "native:build:beta": "tauri build --bundles app --config src-tauri/tauri.beta.conf.json"
   },
   "dependencies": {

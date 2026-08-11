@@ -121,25 +121,24 @@ test('changing language updates native tabs in place without cycling the selecti
   assert.match(macosHelper, /\[self updateLocalisedControls\];/);
 });
 
-test('brand mark follows the system appearance while active controls use the accent color', () => {
-  assert.match(
-    macosHelper,
-    /mark\.image = SBSingleSwitchTemplate\(20\.0\);[\s\S]*?mark\.contentTintColor = nil/,
-  );
+test('brand crest follows the system appearance while active controls use the magical palette', () => {
+  assert.match(macosHelper, /SBMagicalCrestImageView \*mark/);
+  assert.match(macosHelper, /crest-dark\.png/);
+  assert.match(macosHelper, /crest-light\.png/);
+  assert.match(macosHelper, /self\.iconView\.contentTintColor = active \? NSColor\.whiteColor : SBMagicalMutedColor\(\)/);
   assert.doesNotMatch(macosHelper, /mark\.contentTintColor = NSColor\.whiteColor/);
-  assert.match(macosHelper, /active \? NSColor\.controlAccentColor : NSColor\.secondaryLabelColor/);
 });
 
-test('menu bar icon is fixed to one single-switch template', () => {
+test('menu bar icon is fixed to one four-point-star template', () => {
   assert.doesNotMatch(macosHelper, /iconPopup|iconChanged:|menuIcon/);
   assert.doesNotMatch(macosHelper, /@"switch\.2"/);
-  assert.match(macosHelper, /SBSingleSwitchTemplate\(16\.0\)/);
+  assert.match(macosHelper, /SBFourPointStarTemplate\(15\.0\)/);
   assert.match(macosHelper, /SBStatusIconView\.contentTintColor = nil/);
   assert.doesNotMatch(
     macosHelper,
     /SBStatusIconView\.contentTintColor = NSColor\.whiteColor/,
   );
-  assert.match(macosHelper, /mark\.image = SBSingleSwitchTemplate\(20\.0\)/);
+  assert.match(macosHelper, /SBMagicalCrestImageView \*mark/);
   assert.doesNotMatch(app, /menuIcon|setNativeMenuIcon/);
   assert.doesNotMatch(preferences, /Menu bar icon|菜单栏图标|setMenuIcon/);
   assert.doesNotMatch(nativeBridge, /setNativeMenuIcon|set_menu_icon/);
