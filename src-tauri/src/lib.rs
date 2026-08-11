@@ -3134,10 +3134,11 @@ mod tests {
         );
         assert!(helper.contains("buttonType = NSButtonTypeMomentaryPushIn"));
         assert!(!helper.contains("@interface SBNativeFooterButton : NSButton"));
-        assert!(!helper.contains("NSTrackingMouseEnteredAndExited"));
+        assert!(helper.contains("@interface SBMagicalHoverButton : NSButton"));
+        assert_eq!(helper.matches("NSTrackingMouseEnteredAndExited").count(), 1);
         assert!(!helper.contains("hoverTrackingArea"));
-        assert!(!helper.contains("mouseEntered:"));
-        assert!(!helper.contains("mouseExited:"));
+        assert_eq!(helper.matches("mouseEntered:").count(), 1);
+        assert_eq!(helper.matches("mouseExited:").count(), 1);
         assert!(
             helper
                 .matches("showsBorderOnlyWhileMouseInside = YES")
@@ -3149,7 +3150,7 @@ mod tests {
             helper.contains("quit.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor")
         );
         assert!(!helper.contains("NSStackViewDistributionEqualCentering"));
-        assert!(helper.contains("systemFontOfSize:15.0 weight:NSFontWeightMedium"));
+        assert!(helper.contains("SBMagicalRoundedFont(15.0, NSFontWeightSemibold)"));
         assert!(helper.contains("systemFontOfSize:NSFont.systemFontSize"));
         assert!(helper.contains("systemFontOfSize:NSFont.smallSystemFontSize"));
         assert!(helper.contains("systemFontOfSize:13.0 weight:NSFontWeightRegular"));
@@ -3180,7 +3181,7 @@ mod tests {
         assert!(!helper.contains("glass.cornerRadius"));
         assert!(!helper.contains("NSAppearanceNameDarkAqua"));
         assert!(!helper.contains("[NSColor colorWithWhite:0.02 alpha:0.30]"));
-        assert!(!helper.contains("NSTrackingMouseEnteredAndExited"));
+        assert_eq!(helper.matches("NSTrackingMouseEnteredAndExited").count(), 1);
         assert!(helper.contains("settings.showsBorderOnlyWhileMouseInside = YES"));
         assert!(helper.contains("customise.showsBorderOnlyWhileMouseInside = YES"));
         assert!(helper.contains("quit.showsBorderOnlyWhileMouseInside = YES"));

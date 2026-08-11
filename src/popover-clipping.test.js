@@ -10,7 +10,9 @@ const macosHelper = await readFile(
 );
 
 test('native popover clips the shell and content to one shared radius', () => {
-  const shell = styles.match(/\.native-popover-shell\s*\{(?<rules>[\s\S]*?)\n\}/)?.groups?.rules ?? '';
+  const shells = [...styles.matchAll(/\.native-popover-shell\s*\{(?<rules>[\s\S]*?)\n\}/g)]
+    .map((match) => match.groups?.rules ?? '');
+  const shell = shells.find((rules) => /--native-popover-corner-radius:\s*20px/.test(rules)) ?? '';
 
   assert.match(shell, /--native-popover-corner-radius:\s*20px/);
   assert.match(shell, /overflow:\s*hidden/);

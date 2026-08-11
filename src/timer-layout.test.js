@@ -14,9 +14,9 @@ test('the macOS app delegates timer choices to a native menu', () => {
 });
 
 test('browser preview keeps an anchored non-modal fallback', () => {
-  const popoverRules = styles.match(
-    /\.timer-popover\s*\{(?<rules>[\s\S]*?)\n\}/,
-  )?.groups?.rules ?? '';
+  const popoverRules = [...styles.matchAll(/\.timer-popover\s*\{(?<rules>[\s\S]*?)\n\}/g)]
+    .map((match) => match.groups?.rules ?? '')
+    .find((rules) => /position:\s*absolute/.test(rules)) ?? '';
 
   assert.match(panel, /className=\{`timer-popover is-\$\{anchor\.placement\}`\}/);
   assert.match(panel, /role="menu"/);

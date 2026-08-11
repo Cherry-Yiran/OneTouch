@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm theme:assets && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,6 +28,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../src/assets/magical/crest-light.png": "magical/crest-light.png",
+      "../src/assets/magical/crest-dark.png": "magical/crest-dark.png",
+      "theme/Assets.car": "Assets.car"
+    },
     "category": "Utility",
     "shortDescription": "A quiet macOS menu bar control desk",
     "longDescription": "OneTouch collects everyday macOS controls into one focused menu bar utility.",

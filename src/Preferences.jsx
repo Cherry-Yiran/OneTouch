@@ -24,9 +24,10 @@ import {
   Keyboard,
   Settings2,
   SlidersHorizontal,
-  ToggleRight,
   X,
 } from 'lucide-react';
+import crestDarkUrl from './assets/magical/crest-dark.png';
+import crestLightUrl from './assets/magical/crest-light.png';
 import { reorderControlByOffset } from './reorder';
 import { validateNativeGlobalShortcut } from './nativeBridge.js';
 import {
@@ -662,7 +663,7 @@ export default function Preferences({
 
         {activeTab === 'about' && (
           <section className="pref-panel about-panel" id="pref-panel-about" role="tabpanel" aria-labelledby="pref-tab-about">
-            <div className="about-mark"><ToggleRight size={48} /></div>
+            <div className="about-mark"><img className="app-crest crest-light" src={crestLightUrl} alt="" /><img className="app-crest crest-dark" src={crestDarkUrl} alt="" /></div>
             <div><h2>{copy.aboutTitle}</h2></div>
             <div className="about-rule" />
             <div className="about-info"><strong>{appVersion || '—'}</strong></div>

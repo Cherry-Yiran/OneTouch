@@ -1,45 +1,34 @@
-# OneTouch 界面设计原则
+# OneTouch 产品形态与 macOS 稳定性原则
 
-OneTouch 的界面目标是接近 macOS 自带菜单栏组件：克制、原生、稳定，并随系统版本与外观自动更新。
+OneTouch 的完整视觉语言、颜色令牌、字体、材质、组件状态、无障碍规则与素材提示词，统一以仓库根目录的 [`design.md`](../design.md) 为唯一真源。本文件只记录不可被视觉改造改变的产品形态与 macOS 稳定性边界。
 
-## 原生优先
+## 菜单栏应用形态
 
-- 凡 macOS 已提供对应能力的表面、材质、颜色、控件和动效，直接使用 AppKit 原生组件与语义参数，不额外叠加硬编码 RGB、透明度或自定义模糊强度。
-- 主浮窗使用标准 `NSPanel`；macOS 26 及以上使用 `NSGlassEffectViewStyleRegular`，保持 `tintColor = nil`；旧系统回退到 `NSVisualEffectMaterialPopover`。
-- 产品不使用带箭头的 `NSPopover`，也不叠加旧模糊层、自绘颜色或自定义模糊强度。
-- 主控制浮窗不显示箭头，也不使用 CSS、CALayer 或图片伪造尖角、圆角、边框、背景、模糊、阴影和开合动画。
-- 主面板只在“标题与控制列表”“控制列表与底部操作区”两个分组边界使用 AppKit 原生 `NSBoxSeparator`；控制行之间不加分割线。
+- OneTouch 是纯 macOS 菜单栏应用，不是普通桌面窗口应用；不得增加 Dock 图标、居中主窗口、独立控制窗口、标题栏或红黄绿按钮。
+- 主控制面板必须保持锚定到 `NSStatusItem.button` 真实屏幕坐标的无标题栏 `NSPanel`，只由菜单栏点击或明确快捷键打开。
+- 没有有效菜单栏锚点时，修复状态项并返回错误；不得回退为未锚定窗口。
+- 启动、登录启动、再次打开运行中的应用与辅助功能授权成功后，只确保菜单栏图标可见，不自动展示主控制面板。
+- 底栏结构固定为“设置靠左、自定义正中、退出靠右”；控制项超过 8 个时保持面板密度并使用原生滚动。
 
-## 控件与交互
+## AppKit 外壳与控件
 
-- 原生按钮的 hover、按下、非活跃与深浅色状态交给 `NSButton`。底栏按钮使用 `showsBorderOnlyWhileMouseInside`，默认透明，悬停时由 AppKit 显示系统背景。
-- 功能标题使用 `systemFontSize`，次级说明使用 `smallSystemFontSize`，两者保持 Regular；品牌标题最多使用 Medium。
-- 每一行保留固定的右侧控件列；系统开关、操作按钮和加载状态不得挤入文案区域。
-- 行高、左右留白和按钮点击区域使用统一尺寸，不用额外角标或另一套交互表达同一状态。
-- 隐藏的按钮不得参与布局或占据间距；可选附件只在显示时加入布局。
-- 菜单栏图标固定为一个随系统外观变色的单开关模板图标，不提供图标类型选择，不使用双开关符号。
-- 主面板品牌开关标志使用系统标签色；功能状态、系统开关与设置页选中态使用系统强调色。
+- 窗口、玻璃外壳、系统开关、菜单、工具栏、搜索、拖拽和快捷键继续直接使用 AppKit 原生组件与语义参数。
+- macOS 26 及以上的主面板外壳使用 `NSGlassEffectViewStyleRegular` 并保持 `tintColor = nil`；旧系统回退到 `NSVisualEffectMaterialPopover`。对系统玻璃外壳不额外叠加硬编码 RGB、透明度或自定义模糊强度。
+- 主面板只在标题/控制列表、控制列表/底栏两个分组边界使用原生 `NSBoxSeparator`；不以 CSS、图片或 CALayer 伪造系统玻璃外壳。
+- 设置页继续使用 `NSWindow`、`NSTabViewController`、`NSPopUpButton`、`NSSwitch`、`NSTableView` 与 `NSSearchField`；WebView 仅作为浏览器与非 macOS 预览回退。
+- 原生语义回退中，功能标题使用 `systemFontSize`，次级说明使用 `smallSystemFontSize`，品牌标题最多使用 Medium；Peach Star Magic 内容层的圆体层级以 [`design.md`](../design.md) 为准。
+- 菜单栏图标使用随系统外观变化的单枚四角星模板图标；蜜桃星辉徽章只用于主面板标题与关于页，不替换正式应用图标。
 
-## 主面板
+## 权限、身份与数据
 
-- 主浮窗读取 `NSStatusItem.button` 的真实屏幕坐标，以按钮中点为锚点水平居中，并贴合菜单栏下沿。
-- 启动、登录启动、辅助功能授权成功和再次打开应用只确保菜单栏状态项可用，不自动展示主控制浮窗。
-- OneTouch 只使用一个公开 AppKit 状态项，不使用私有 `NSSceneStatusItem` 或菜单栏排序接口。
-- 底部导航保持“设置靠左、自定义正中、电源靠右”，不使用根据内容重新聚拢的自动均分布局。
-- 控制项超过 8 个时，面板保持固定高度并使用原生滚动。
+- 辅助功能引导只负责申请和确认权限；成功提示结束后关闭引导，不调用主面板展示函数。
+- 正式 bundle ID 固定为 `design.ryan.onetouch.menubar`；配置域继续使用 `design.ryan.switchboard.menubar.v2`。
+- 首次创建新 bundle ID 的 WebView 前，完成旧 WebKit 数据的一次性迁移；视觉改造不得重置语言、控制项、排序、快捷键、计时器或登录启动设置。
+- 只使用公开 `statusItemWithLength:`，不重新引入状态项私有 API、排序优先级、`autosaveName` 或循环 remove/recreate。
+- 状态项可用性必须以真实可见的屏幕锚点为准；对象存在或进程存活不能替代坐标与视觉验证。
 
-## 设置窗口
+## 回归门槛
 
-- macOS 设置页使用原生 `NSWindow`、`NSTabViewController`、`NSPopUpButton`、`NSSwitch` 和 `NSTableView`；WebView 只作为非 macOS 与浏览器预览回退。
-- 表单使用 `NSGridView` 对齐标签与控件；长列表使用 `NSTableViewStyleInset`、原生 `NSSearchField` 和 mini 选择控件。
-- 顶部标题由 AppKit 标题栏绘制，并与“通用、自定义、快捷键、关于”四个标签同步。
-- 工具栏使用 `NSWindowToolbarStylePreference` 和 `NSTabViewController` 自动生成的原生图标、标签、系统强调色与 hover 状态。
-- 四个页面统一使用 400pt 内容宽度、20pt 内容边距和 34pt 列表行高，不因页面切换改变窗口宽度。
-- “关于”页只保留应用图标、产品名、版本号、更新按钮和 GitHub 跳转按钮。
-
-## 兼容与身份
-
-- 原生设置界面的调整必须兼容既有语言、登录启动、控制项选择与排序、超过 8 项后的滚动、全局快捷键和本机持久化数据。
-- macOS 26 上使用 `design.ryan.onetouch.menubar` 作为当前 bundle ID，并从旧偏好域 `design.ryan.switchboard.menubar.v2` 读取数据。
-- WebKit 数据只在首个 WebView 创建前从旧 bundle ID 迁移一次。新身份首次运行需要重新授予辅助功能权限。
-- 没有真实菜单栏锚点时，不把控制界面降级为屏幕中心窗口或普通桌面应用窗口。
+- 视觉改造不得更改 React–Rust–Objective-C 的公开模型结构、原生计时器菜单行为或已有系统操作语义。
+- 浅色、深色、高对比度、减少透明度和减少动态效果均需可用；具体表现与对比度要求见 [`design.md`](../design.md)。
+- 完整 production `.app` 必须验证菜单栏可见、面板真实锚定、点击外部关闭、再次打开不弹面板、授权成功不弹面板，以及全程无 Dock 图标和普通桌面窗口。

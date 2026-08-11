@@ -36,7 +36,7 @@
 </p>
 
 <p align="center">
-  OneTouch 使用 AppKit 原生面板、控件、字体、颜色与系统材质，并自动适配浅色和深色外观。
+  OneTouch 保留原生 AppKit 菜单栏体验，并以「Peach Star Magic / 蜜桃星辉魔法」自动适配浅色与深色外观。
 </p>
 
 ---
@@ -138,8 +138,10 @@ pnpm native:build
 
 ## 设计与实现
 
-OneTouch 坚持使用 Apple 公开的 AppKit 组件与系统语义参数，不手工模拟 macOS 的玻璃材质、颜色、模糊强度、按钮状态或菜单行为。
+OneTouch 的内容视觉采用「Peach Star Magic / 蜜桃星辉魔法」：奶油暖白与莓果紫蓝双主题、粉橙糖果釉面、软浮雕图标底座和翼形星徽。菜单栏应用形态、系统玻璃外壳、开关、菜单、工具栏与窗口行为仍使用 Apple 公开 AppKit 能力。
 
+- [Peach Star Magic 视觉规范](design.md)
+- [可交互设计预览](design-preview.html)
 - [界面设计原则与布局约束](docs/DESIGN_PRINCIPLES.md)
 - [Apple 官方组件来源](docs/APPLE_COMPONENTS.md)
 
