@@ -33,7 +33,6 @@ import {
   Zap,
 } from 'lucide-react';
 import Preferences, { PREFERENCES_COPY } from './Preferences.jsx';
-import ResolutionPanel from './ResolutionPanel.jsx';
 import TimerPanel from './TimerPanel.jsx';
 import DiskPanel from './DiskPanel.jsx';
 import {
@@ -71,8 +70,8 @@ import {
   setNativeEjectExclusions,
   setNativeSwitch,
   showNativeAccessibilityGuide,
-  showLegacyPopover,
   showNativePopover,
+  showNativeResolutionMenu,
   showNativeTimerMenu,
   syncNativeGlobalShortcuts,
   updateNativePreferences,
@@ -81,13 +80,14 @@ import {
   validateNativeGlobalShortcut,
 } from './nativeBridge.js';
 import { recoveryPaneForError } from './nativeErrors.js';
+import { resolveInitialLanguage } from './localization.js';
 import {
   NEW_FEATURE_IDS,
   NEW_FEATURES_VERSION,
   shouldShowNewFeatureBadges,
   updateCheckIsDue,
 } from './releaseNotes.js';
-import { displayResolutionSummary, primaryDisplay } from './resolutionModel.js';
+import { displayResolutionSummary } from './resolutionModel.js';
 import {
   conflictingShortcutId,
   formatShortcut,
@@ -105,6 +105,8 @@ import {
   clampVisibleControlIds,
   toggleVisibleControl,
 } from './visibility.js';
+
+const ACCESSIBILITY_ONBOARDING_SEEN_KEY = 'onetouch-accessibility-onboarding-seen-v1';
 
 const COPY = {
   en: {
@@ -162,6 +164,7 @@ const SWITCHES = [
 const NON_TOGGLE_CONTROL_IDS = SWITCHES
   .filter((item) => item.kind !== CONTROL_KINDS.TOGGLE)
   .map((item) => item.id);
+const PROCESS_OWNED_TIMED_CONTROL_IDS = new Set(['awake']);
 const MIN_ACTION_PROGRESS_MS = 650;
 const COMPLETION_FEEDBACK_MS = 1400;
 const SECONDARY_PANEL_EXIT_MS = 100;
@@ -436,7 +439,10 @@ function audioDeviceDescription(snapshot, language, text) {
 export default function App() {
   const nativeView = new URLSearchParams(window.location.search).get('view');
   const nativeApp = isNativeApp();
-  const [language, setLanguage] = useState(() => localStorage.getItem('switchboard-language') || 'zh');
+  const [language, setLanguage] = useState(() => resolveInitialLanguage(
+    localStorage.getItem('switchboard-language'),
+    navigator.languages,
+  ));
   const [appName, setAppName] = useState('OneTouch');
   const [appIdentifier, setAppIdentifier] = useState('');
   const [appVersion, setAppVersion] = useState('');
@@ -469,6 +475,11 @@ export default function App() {
   const [nativePreferencesMessageError, setNativePreferencesMessageError] = useState(false);
   const [nativeUpdate, setNativeUpdate] = useState({ phase: 'idle', version: '', progress: null });
   const [nativePopoverActionsReady, setNativePopoverActionsReady] = useState(false);
+  const [shouldAutoShowAccessibilityGuide, setShouldAutoShowAccessibilityGuide] = useState(() => (
+    nativeApp
+    && nativeView === 'popover'
+    && localStorage.getItem(ACCESSIBILITY_ONBOARDING_SEEN_KEY) !== '1'
+  ));
   const [hasUnseenFeatures, setHasUnseenFeatures] = useState(false);
   const [featureDiscoveryIds, setFeatureDiscoveryIds] = useState([]);
   const [pendingActionIds, setPendingActionIds] = useState(() => new Set());
@@ -479,12 +490,7 @@ export default function App() {
   const [audioDeviceState, setAudioDeviceState] = useState(null);
   const [rowMessages, setRowMessages] = useState({});
   const [announcement, setAnnouncement] = useState('');
-  const [resolutionPanelOpen, setResolutionPanelOpen] = useState(false);
   const [displayConfiguration, setDisplayConfiguration] = useState(null);
-  const [selectedDisplayId, setSelectedDisplayId] = useState(null);
-  const [resolutionLoading, setResolutionLoading] = useState(false);
-  const [resolutionError, setResolutionError] = useState('');
-  const [pendingResolutionMode, setPendingResolutionMode] = useState('');
   const [timerPanelControlId, setTimerPanelControlId] = useState(null);
   const [timerPopoverAnchor, setTimerPopoverAnchor] = useState(null);
   const [timerSelectionPending, setTimerSelectionPending] = useState(false);
@@ -504,7 +510,7 @@ export default function App() {
   const timerRearmAttemptedRef = useRef(new Set());
   const secondaryCloseTimerRef = useRef(null);
   const secondaryClosingRef = useRef(null);
-  const isBetaBuild = appIdentifier === 'design.ryan.onetouch.beta';
+  const isBetaBuild = appIdentifier.endsWith('.beta');
   const text = useMemo(() => ({
     ...COPY[language],
     title: appName,
@@ -517,7 +523,6 @@ export default function App() {
     setClosingSecondaryPanel(panel);
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     secondaryCloseTimerRef.current = window.setTimeout(() => {
-      if (panel === 'resolution') setResolutionPanelOpen(false);
       if (panel === 'disk') setDiskPanelOpen(false);
       secondaryClosingRef.current = null;
       setClosingSecondaryPanel(null);
@@ -553,7 +558,6 @@ export default function App() {
       Math.max(TIMER_POPOVER_MARGIN, rect.right - hostRect.left - TIMER_POPOVER_WIDTH),
       hostRect.width - TIMER_POPOVER_WIDTH - TIMER_POPOVER_MARGIN,
     );
-    setResolutionPanelOpen(false);
     setDiskPanelOpen(false);
     setTimerPopoverAnchor({
       top,
@@ -592,7 +596,10 @@ export default function App() {
     }
   };
 
-  useEffect(() => localStorage.setItem('switchboard-language', language), [language]);
+  useEffect(() => {
+    localStorage.setItem('switchboard-language', language);
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  }, [language]);
   useEffect(() => localStorage.setItem('switchboard-state', JSON.stringify(switches)), [switches]);
   useEffect(() => localStorage.setItem('switchboard-visible', JSON.stringify(visibleIds)), [visibleIds]);
   useEffect(() => localStorage.setItem('switchboard-order', JSON.stringify(orderedIds)), [orderedIds]);
@@ -689,10 +696,13 @@ export default function App() {
     );
   }, [nativeApp, nativeView]);
   useEffect(() => {
-    if (!nativeApp || !['popover', 'preferences'].includes(nativeView)) return undefined;
+    if (!nativeApp || !['popover', 'preferences'].includes(nativeView) || !appIdentifier) return undefined;
     let disposed = false;
     setStartAtLoginLoading(true);
-    getNativeAutostartEnabled()
+    const readOrDisableAutostart = isBetaBuild
+      ? setNativeAutostartEnabled(false)
+      : getNativeAutostartEnabled();
+    readOrDisableAutostart
       .then((enabled) => {
         if (!disposed) setStartAtLogin(Boolean(enabled));
       })
@@ -703,19 +713,11 @@ export default function App() {
         if (!disposed) setStartAtLoginLoading(false);
       });
     return () => { disposed = true; };
-  }, [language, nativeView]);
+  }, [appIdentifier, isBetaBuild, language, nativeApp, nativeView]);
   useEffect(() => {
     document.documentElement.dataset.nativeView = nativeView || 'preview';
     return () => { delete document.documentElement.dataset.nativeView; };
   }, [nativeView]);
-  useEffect(() => {
-    if (!resolutionPanelOpen) return undefined;
-    const closeOnEscape = (event) => {
-      if (event.key === 'Escape' && !pendingResolutionMode) closeSecondaryPanel('resolution');
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [pendingResolutionMode, resolutionPanelOpen, closingSecondaryPanel]);
   const refreshNativeSnapshot = async () => {
     if (!nativeApp) return null;
     if (nativeSnapshotRequestRef.current) return nativeSnapshotRequestRef.current;
@@ -771,6 +773,19 @@ export default function App() {
         || pendingActionIds.has(id)
         || timerRearmAttemptedRef.current.has(id)
       ) return;
+
+      // These controls own a child process. If that process disappeared with
+      // an earlier app session, never resurrect it merely because a saved UI
+      // timer has not expired yet; the user must explicitly enable it again.
+      if (PROCESS_OWNED_TIMED_CONTROL_IDS.has(id)) {
+        setTimers((current) => {
+          if (!current[id]) return current;
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+        return;
+      }
 
       timerRearmAttemptedRef.current.add(id);
       setPendingActionIds((current) => new Set(current).add(id));
@@ -893,60 +908,58 @@ export default function App() {
     resizeNativePopover(menuItems.length).catch(() => undefined);
   }, [menuItems.length, nativeApp, nativeView]);
 
-  const loadDisplayConfiguration = async () => {
-    setResolutionLoading(true);
-    setResolutionError('');
-    try {
-      const configuration = await getNativeDisplayConfiguration();
-      setDisplayConfiguration(configuration);
-      const preferred = primaryDisplay(configuration);
-      setSelectedDisplayId((current) => (
-        configuration?.displays?.some((display) => display.id === current)
-          ? current
-          : preferred?.id ?? null
-      ));
-      return configuration;
-    } catch (error) {
-      const message = localiseNativeError(error, language, text);
-      setResolutionError(message);
-      setAnnouncement(`${text.resolutionPanelTitle}: ${message}`);
-      return null;
-    } finally {
-      setResolutionLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (nativeView !== 'popover') return undefined;
+    let disposed = false;
+    getNativeDisplayConfiguration()
+      .then((configuration) => {
+        if (!disposed) setDisplayConfiguration(configuration);
+      })
+      .catch(() => undefined);
+    return () => { disposed = true; };
+  }, [nativeView]);
 
-  const openResolutionPanel = async () => {
-    closeTimerPopover();
-    setDiskPanelOpen(false);
-    setResolutionPanelOpen(true);
-    setResolutionError('');
-    if (nativeApp) await showLegacyPopover();
-    await loadDisplayConfiguration();
-  };
-
-  const selectResolutionMode = async (displayId, mode) => {
-    const key = `${displayId}:${mode.id}`;
-    if (pendingResolutionMode) return;
-    setPendingResolutionMode(key);
-    setResolutionError('');
+  const applyResolutionSelection = async (selection) => {
+    if (!selection?.displayId || !Number.isInteger(selection?.modeId)
+        || pendingActionIds.has('resolution')) return;
+    setPendingActionIds((current) => new Set(current).add('resolution'));
     setAnnouncement(`${text.resolutionPanelTitle}: ${text.processing}`);
     try {
-      const configuration = await setNativeDisplayMode(displayId, mode.id);
+      const configuration = await setNativeDisplayMode(selection.displayId, selection.modeId);
       setDisplayConfiguration(configuration);
-      setSelectedDisplayId(displayId);
       setRowMessages((current) => ({ ...current, resolution: null }));
-      setAnnouncement(`${text.resolutionPanelTitle}: ${mode.width} × ${mode.height}`);
+      setAnnouncement(`${text.resolutionPanelTitle}: ${selection.width} × ${selection.height}`);
     } catch (error) {
       const message = localiseNativeError(error, language, text);
-      setResolutionError(message);
       setRowMessages((current) => ({
         ...current,
         resolution: { text: message, recoveryPane: null },
       }));
       setAnnouncement(`${text.resolutionPanelTitle}: ${message}`);
     } finally {
-      setPendingResolutionMode('');
+      setPendingActionIds((current) => {
+        const next = new Set(current);
+        next.delete('resolution');
+        return next;
+      });
+    }
+  };
+
+  const openResolutionPicker = async () => {
+    if (pendingActionIds.has('resolution')) return;
+    closeTimerPopover();
+    setDiskPanelOpen(false);
+    setRowMessages((current) => ({ ...current, resolution: null }));
+    try {
+      const selection = await showNativeResolutionMenu(language);
+      if (selection) await applyResolutionSelection(selection);
+    } catch (error) {
+      const message = localiseNativeError(error, language, text);
+      setRowMessages((current) => ({
+        ...current,
+        resolution: { text: message, recoveryPane: null },
+      }));
+      setAnnouncement(`${text.resolutionPanelTitle}: ${message}`);
     }
   };
 
@@ -958,7 +971,7 @@ export default function App() {
     setRowMessages((current) => ({ ...current, [id]: null }));
 
     if (id === 'resolution') {
-      await openResolutionPanel();
+      await openResolutionPicker();
       return;
     }
 
@@ -1035,7 +1048,7 @@ export default function App() {
       setAnnouncement(`${controlTitle}: ${enabled ? text.enabled : text.disabled}`);
       if (id === 'airpods') {
         refreshNativeSnapshot().catch(() => undefined);
-      } else if (['dnd', 'nightShift', 'trueTone', 'lowPower', 'highPower'].includes(id)) {
+      } else if (['awake', 'dnd', 'nightShift', 'trueTone', 'lowPower', 'highPower'].includes(id)) {
         await refreshNativeSnapshot();
       }
       if (!enabled && TIMED_CONTROL_IDS.includes(id)) {
@@ -1099,7 +1112,6 @@ export default function App() {
   };
 
   const openDiskPanel = async () => {
-    setResolutionPanelOpen(false);
     closeTimerPopover();
     setDiskPanelOpen(true);
     await loadExternalDisks();
@@ -1170,6 +1182,19 @@ export default function App() {
 
   const updateStartAtLogin = async (enabled) => {
     if (startAtLoginLoading) return;
+    if (isBetaBuild) {
+      setStartAtLoginLoading(true);
+      setStartAtLoginError('');
+      try {
+        await setNativeAutostartEnabled(false);
+        setStartAtLogin(false);
+      } catch {
+        setStartAtLoginError(language === 'zh' ? '无法关闭测试版的登录启动。' : 'Could not disable login launch for the beta build.');
+      } finally {
+        setStartAtLoginLoading(false);
+      }
+      return;
+    }
     const previous = startAtLogin;
     setStartAtLogin(Boolean(enabled));
     setStartAtLoginLoading(true);
@@ -1366,7 +1391,18 @@ export default function App() {
   };
 
   const quit = async () => {
-    if (nativeView === 'popover' && await quitNativeApp()) return;
+    if (nativeView === 'popover') {
+      const timedControlIds = Object.keys(timers);
+      const storedTimers = JSON.stringify(timers);
+      localStorage.setItem('switchboard-timers', '{}');
+      try {
+        if (await quitNativeApp(timedControlIds)) return;
+      } catch (error) {
+        localStorage.setItem('switchboard-timers', storedTimers);
+        setAnnouncement(`${text.title}: ${localiseNativeError(error, language, text)}`);
+        return;
+      }
+    }
     setIsOpen(false);
   };
 
@@ -1418,6 +1454,10 @@ export default function App() {
       const choice = ['30m', '1h', '2h', '4h', 'today', 'none'][value];
       const deadline = deadlineForTimerChoice(choice);
       if (deadline !== undefined) await applyControlTimer(controlId, deadline);
+      return;
+    }
+    if (action === 'choice' && controlId === 'resolution') {
+      await openResolutionPicker();
       return;
     }
 
@@ -1585,18 +1625,25 @@ export default function App() {
     ...ACCESSIBILITY_GUIDE_COPY[language],
     appName,
     language,
-    autoShow: false,
-  }), [appName, language]);
+    autoShow: shouldAutoShowAccessibilityGuide,
+  }), [appName, language, shouldAutoShowAccessibilityGuide]);
 
   useEffect(() => {
     if (!nativeApp || nativeView !== 'popover' || !appIdentifier) return;
-    updateNativeAccessibilityGuide(accessibilityGuideModel).catch(() => undefined);
+    updateNativeAccessibilityGuide(accessibilityGuideModel).then(() => {
+      if (!accessibilityGuideModel.autoShow) return;
+      localStorage.setItem(ACCESSIBILITY_ONBOARDING_SEEN_KEY, '1');
+      setShouldAutoShowAccessibilityGuide(false);
+    }).catch(() => undefined);
   }, [accessibilityGuideModel, appIdentifier, nativeApp, nativeView]);
 
   const nativePreferencesModel = useMemo(() => {
     const copy = {
       ...PREFERENCES_COPY[language],
       aboutTitle: appName,
+      startAtLoginNote: isBetaBuild
+        ? PREFERENCES_COPY[language].betaAutostartNote
+        : PREFERENCES_COPY[language].startAtLoginNote,
     };
     let updateTitle = copy.checkForUpdates;
     let updateStatus = '';
@@ -1627,6 +1674,7 @@ export default function App() {
       githubURL: GITHUB_URL,
       xURL: X_URL,
       startAtLogin,
+      startAtLoginDisabled: isBetaBuild,
       startAtLoginLoading,
       startAtLoginError,
       shortcutMessage: nativePreferencesMessage,
@@ -1691,6 +1739,7 @@ export default function App() {
       orderedIds={orderedIds}
       setOrderedIds={setOrderedIds}
       startAtLogin={startAtLogin}
+      startAtLoginDisabled={isBetaBuild}
       startAtLoginLoading={startAtLoginLoading}
       startAtLoginError={startAtLoginError}
       onStartAtLoginChange={updateStartAtLogin}
@@ -1713,9 +1762,9 @@ export default function App() {
 
   const popover = (
     <section className="status-popover" aria-label={text.title}>
-      <header className="popover-head" aria-hidden={resolutionPanelOpen || diskPanelOpen}><div className="app-identity"><span className="app-mark"><ToggleRight size={19} /></span><span><strong>{text.title}</strong><small>{text.subtitle}</small></span></div></header>
+      <header className="popover-head" aria-hidden={diskPanelOpen}><div className="app-identity"><span className="app-mark"><ToggleRight size={19} /></span><span><strong>{text.title}</strong><small>{text.subtitle}</small></span></div></header>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
-      <div className="switch-list" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}>{menuItems.map((item) => {
+      <div className="switch-list" aria-hidden={diskPanelOpen} inert={diskPanelOpen ? true : undefined}>{menuItems.map((item) => {
         const Icon = item.icon;
         const [defaultTitle, defaultDescription] = text[item.id];
         const control = nativeControls?.[item.id];
@@ -1781,24 +1830,7 @@ export default function App() {
           : <RowAction pending={pending} completed={completed} disabled={unavailable} onClick={() => activateControl(item.id)} label={controlLabel} />;
         return <div className={`switch-row kind-${kind} ${checked ? 'is-active' : ''} ${pending ? 'is-pending' : ''} ${completed ? 'is-complete' : ''} ${unavailable ? 'is-unavailable' : ''} ${recoverable ? 'is-recoverable' : ''} ${!stateKnown ? 'is-unknown' : ''} ${hasError ? 'has-error' : ''}`} key={item.id}><span className="switch-icon"><Icon size={20} strokeWidth={1.65} /></span><span className="switch-copy"><strong>{title}</strong><small>{status}</small></span>{affordance}</div>;
       })}</div>
-      <footer className="popover-foot" aria-hidden={resolutionPanelOpen || diskPanelOpen} inert={resolutionPanelOpen || diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}{hasUnseenFeatures && <span className="new-feature-dot" aria-hidden="true" />}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
-      {resolutionPanelOpen && (
-        <ResolutionPanel
-          copy={text}
-          configuration={displayConfiguration}
-          selectedDisplayId={selectedDisplayId}
-          loading={resolutionLoading}
-          error={resolutionError}
-          pendingModeKey={pendingResolutionMode}
-          closing={closingSecondaryPanel === 'resolution'}
-          onClose={() => {
-            if (!pendingResolutionMode) closeSecondaryPanel('resolution');
-          }}
-          onRetry={loadDisplayConfiguration}
-          onSelectDisplay={setSelectedDisplayId}
-          onSelectMode={selectResolutionMode}
-        />
-      )}
+      <footer className="popover-foot" aria-hidden={diskPanelOpen} inert={diskPanelOpen ? true : undefined}><button type="button" className="foot-icon" aria-label={text.settings} onClick={() => openPreferences('general')}><SlidersHorizontal size={20} /></button><button type="button" className="customise" onClick={() => openPreferences('customise')}>{text.customise}{hasUnseenFeatures && <span className="new-feature-dot" aria-hidden="true" />}</button><button type="button" className="foot-icon power" aria-label={text.quit} onClick={quit}><Power size={21} /></button></footer>
       {!nativeApp && timerPanelControlId && timerPopoverAnchor && (
         <TimerPanel
           controlId={timerPanelControlId}

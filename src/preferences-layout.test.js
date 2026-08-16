@@ -134,11 +134,8 @@ test('menu bar icon is fixed to one single-switch template', () => {
   assert.doesNotMatch(macosHelper, /iconPopup|iconChanged:|menuIcon/);
   assert.doesNotMatch(macosHelper, /@"switch\.2"/);
   assert.match(macosHelper, /SBSingleSwitchTemplate\(16\.0\)/);
-  assert.match(macosHelper, /SBStatusIconView\.contentTintColor = nil/);
-  assert.doesNotMatch(
-    macosHelper,
-    /SBStatusIconView\.contentTintColor = NSColor\.whiteColor/,
-  );
+  assert.match(macosHelper, /button\.contentTintColor = nil/);
+  assert.doesNotMatch(macosHelper, /button\.contentTintColor = NSColor\.whiteColor/);
   assert.match(macosHelper, /mark\.image = SBSingleSwitchTemplate\(20\.0\)/);
   assert.doesNotMatch(app, /menuIcon|setNativeMenuIcon/);
   assert.doesNotMatch(preferences, /Menu bar icon|菜单栏图标|setMenuIcon/);

@@ -61,6 +61,11 @@ export async function setNativeDisplayMode(displayId, modeId) {
   return invoke('set_display_mode', { displayId, modeId });
 }
 
+export async function showNativeResolutionMenu(language) {
+  if (!isTauri()) return null;
+  return invoke('show_resolution_menu', { language });
+}
+
 export async function getNativeExternalDisks() {
   if (!isTauri()) {
     return [
@@ -207,12 +212,6 @@ export async function showNativePopover() {
   return true;
 }
 
-export async function showLegacyPopover() {
-  if (!isTauri()) return false;
-  await invoke('show_legacy_popover');
-  return true;
-}
-
 export async function updateNativePopover(model) {
   if (!isTauri()) return false;
   await invoke('update_native_popover', { model });
@@ -270,8 +269,8 @@ export async function listenForNativeCustomization(handler) {
   return listen('switchboard-customization-changed', (event) => handler(event.payload));
 }
 
-export async function quitNativeApp() {
+export async function quitNativeApp(timedControlIds = []) {
   if (!isTauri()) return false;
-  await invoke('quit_app');
+  await invoke('quit_app', { timedControlIds });
   return true;
 }

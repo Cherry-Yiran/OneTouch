@@ -30,14 +30,16 @@ export function controlKind(id) {
 }
 
 export function usesSwitchAffordance(kind) {
-  return kind === CONTROL_KINDS.TOGGLE || kind === CONTROL_KINDS.ACTION;
+  return kind === CONTROL_KINDS.TOGGLE
+    || kind === CONTROL_KINDS.ACTION
+    || kind === CONTROL_KINDS.CHOICE;
 }
 
 export function controlSwitchState(kind, currentState, { pending = false, completed = false } = {}) {
-  if (kind === CONTROL_KINDS.ACTION) {
+  if (kind === CONTROL_KINDS.ACTION || kind === CONTROL_KINDS.CHOICE) {
     return {
       checked: Boolean(pending),
-      locked: Boolean(pending || completed),
+      locked: Boolean(pending || (kind === CONTROL_KINDS.ACTION && completed)),
     };
   }
   return {

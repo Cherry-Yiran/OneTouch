@@ -7,13 +7,13 @@ import {
   updateCheckIsDue,
 } from './releaseNotes.js';
 
-test('shows lightweight feature badges once for formal and beta builds', () => {
-  assert.equal(NEW_FEATURES_VERSION, '0.3.4');
-  assert.deepEqual(NEW_FEATURE_IDS, ['clearDownloads']);
-  assert.equal(shouldShowNewFeatureBadges('0.3.4', ''), true);
-  assert.equal(shouldShowNewFeatureBadges('0.3.4-beta.1', ''), true);
-  assert.equal(shouldShowNewFeatureBadges('0.3.4', '0.3.4'), false);
-  assert.equal(shouldShowNewFeatureBadges('0.3.3', ''), false);
+test('does not show a feature badge when no new controls remain', () => {
+  assert.equal(NEW_FEATURES_VERSION, '1.1.0');
+  assert.deepEqual(NEW_FEATURE_IDS, []);
+  assert.equal(shouldShowNewFeatureBadges('1.1.0', ''), false);
+  assert.equal(shouldShowNewFeatureBadges('1.1.0-beta.1', ''), false);
+  assert.equal(shouldShowNewFeatureBadges('1.1.0', '1.1.0'), false);
+  assert.equal(shouldShowNewFeatureBadges('1.0.0', ''), false);
 });
 
 test('limits background update checks to once per day', () => {

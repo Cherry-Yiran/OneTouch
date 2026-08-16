@@ -1,8 +1,9 @@
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-export const NEW_FEATURES_VERSION = '0.3.4';
-export const NEW_FEATURE_IDS = Object.freeze(['clearDownloads']);
+export const NEW_FEATURES_VERSION = '1.1.0';
+export const NEW_FEATURE_IDS = Object.freeze([]);
 
 export function shouldShowNewFeatureBadges(version, seenVersion) {
+  if (NEW_FEATURE_IDS.length === 0) return false;
   const matchesVersion = typeof version === 'string' && (
     version === NEW_FEATURES_VERSION
     || version.startsWith(`${NEW_FEATURES_VERSION}-`)

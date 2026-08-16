@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OneTouch",
-  "version": "1.0.0",
-  "identifier": "design.ryan.onetouch.menubar",
+  "mainBinaryName": "OneTouch",
+  "version": "1.1.0",
+  "identifier": "com.cherryyiran.onetouch",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:1420",

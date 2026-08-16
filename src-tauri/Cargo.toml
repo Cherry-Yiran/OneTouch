@@ -1,6 +1,6 @@
 [package]
 name = "onetouch"
-version = "1.0.0"
+version = "1.1.0"
 description = "A quiet macOS menu bar control desk"
 authors = ["Ryan Design"]
 edition = "2021"
