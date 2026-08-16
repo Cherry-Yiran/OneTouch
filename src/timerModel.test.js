@@ -11,7 +11,7 @@ import {
 
 test('restores only supported finite timer deadlines', () => {
   assert.deepEqual(
-    restoreTimers('{"awake":2000,"removed":3000,"dnd":"later"}'),
+    restoreTimers('{"awake":2000,"agentMode":2500,"removed":3000,"dnd":"later"}'),
     { awake: 2000 },
   );
 });

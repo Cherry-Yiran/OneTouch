@@ -64,6 +64,7 @@ export const PREFERENCES_COPY = {
     language: 'Language',
     startAtLogin: 'Start at login',
     startAtLoginNote: 'Keep OneTouch ready in the menu bar.',
+    betaAutostartNote: 'Beta builds never start automatically.',
     autostartError: 'Could not update the login setting.',
     saved: 'Changes are saved on this Mac.',
     activeMenu: 'Visible in menu',
@@ -122,6 +123,7 @@ export const PREFERENCES_COPY = {
     language: '语言',
     startAtLogin: '登录时启动',
     startAtLoginNote: '让 OneTouch 始终在菜单栏待命。',
+    betaAutostartNote: '测试版不会自动启动。',
     autostartError: '无法更新登录启动设置。',
     saved: '更改已保存在本机。',
     activeMenu: '菜单中显示',
@@ -221,7 +223,7 @@ function StyledSelect({ ariaLabel, value, options, onChange }) {
   );
 }
 
-function PreferenceToggle({ checked, loading, label, onChange }) {
+function PreferenceToggle({ checked, disabled = false, loading, label, onChange }) {
   return (
     <button
       type="button"
@@ -230,7 +232,7 @@ function PreferenceToggle({ checked, loading, label, onChange }) {
       aria-checked={checked}
       aria-busy={loading}
       aria-label={label}
-      disabled={loading}
+      disabled={loading || disabled}
       onClick={() => onChange(!checked)}
     >
       <span />
@@ -389,6 +391,7 @@ export default function Preferences({
   orderedIds,
   setOrderedIds,
   startAtLogin,
+  startAtLoginDisabled = false,
   startAtLoginLoading,
   startAtLoginError,
   onStartAtLoginChange,
@@ -564,12 +567,13 @@ export default function Preferences({
                 <div className="general-control-stack">
                   <PreferenceToggle
                     checked={startAtLogin}
+                    disabled={startAtLoginDisabled}
                     loading={startAtLoginLoading}
                     label={copy.startAtLogin}
                     onChange={onStartAtLoginChange}
                   />
                   <small className={startAtLoginError ? 'is-error' : ''}>
-                    {startAtLoginError || copy.startAtLoginNote}
+                    {startAtLoginError || (startAtLoginDisabled ? copy.betaAutostartNote : copy.startAtLoginNote)}
                   </small>
                 </div>
               </div>

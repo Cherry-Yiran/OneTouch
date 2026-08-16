@@ -29,15 +29,20 @@ test('reads the number of applications that received a normal quit request', () 
   assert.equal(quitAppsRequestCount('unexpected'), null);
 });
 
-test('persistent and one-time controls share the switch affordance', () => {
+test('persistent, one-time, and direct-choice controls share the switch affordance', () => {
   assert.equal(usesSwitchAffordance(CONTROL_KINDS.TOGGLE), true);
   assert.equal(usesSwitchAffordance(CONTROL_KINDS.ACTION), true);
-  assert.equal(usesSwitchAffordance(CONTROL_KINDS.CHOICE), false);
+  assert.equal(usesSwitchAffordance(CONTROL_KINDS.CHOICE), true);
   assert.equal(usesSwitchAffordance(CONTROL_KINDS.SETTINGS), false);
 });
 
 test('classifies direct system selections as choices', () => {
   assert.equal(controlKind('resolution'), CONTROL_KINDS.CHOICE);
+  assert.equal(usesSwitchAffordance(controlKind('resolution')), true);
+  assert.deepEqual(
+    controlSwitchState(CONTROL_KINDS.CHOICE, false, { pending: true }),
+    { checked: true, locked: true },
+  );
 });
 
 test('one-time actions use the same direct switch interaction', () => {

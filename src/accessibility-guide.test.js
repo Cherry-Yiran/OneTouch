@@ -36,15 +36,17 @@ test('ships bilingual native Accessibility guide copy', () => {
   assert.match(app, /不会记录或上传键盘内容/);
   assert.match(app, /Quit OneTouch/);
   assert.match(app, /退出 OneTouch/);
-  assert.match(app, /autoShow: false/);
-  assert.doesNotMatch(app, /onetouch-accessibility-onboarding-seen/);
+  assert.match(app, /autoShow: shouldAutoShowAccessibilityGuide/);
+  assert.match(app, /onetouch-accessibility-onboarding-seen-v1/);
   assert.match(app, /nativeView !== 'popover' \|\| !appIdentifier/);
   assert.match(app, /updateNativeAccessibilityGuide\(accessibilityGuideModel\)/);
 });
 
-test('never interrupts launch with Accessibility onboarding', () => {
-  assert.match(app, /autoShow: false/);
-  assert.doesNotMatch(app, /setItem\('onetouch-accessibility-onboarding-seen'/);
+test('shows Accessibility onboarding once on a fresh native installation', () => {
+  assert.match(app, /localStorage\.getItem\(ACCESSIBILITY_ONBOARDING_SEEN_KEY\) !== '1'/);
+  assert.match(app, /autoShow: shouldAutoShowAccessibilityGuide/);
+  assert.match(app, /localStorage\.setItem\(ACCESSIBILITY_ONBOARDING_SEEN_KEY, '1'\)/);
+  assert.match(app, /setShouldAutoShowAccessibilityGuide\(false\)/);
   assert.match(app, /pane === 'accessibility'.*showNativeAccessibilityGuide\(\)/s);
 });
 
@@ -143,20 +145,27 @@ test('keeps the main controls as an anchored menu-bar panel', () => {
 });
 
 test('uses the migrated bundle identity and a public AppKit status item', () => {
-  assert.equal(tauriConfig.identifier, 'design.ryan.onetouch.menubar');
+  assert.equal(tauriConfig.identifier, 'com.cherryyiran.onetouch');
+  assert.equal(tauriConfig.mainBinaryName, 'OneTouch');
   assert.match(helper, /SBEnsureStatusItemAvailable/);
   assert.match(helper, /NSContainsRect\(screen\.frame, frame\)/);
   assert.match(helper, /150\.0 \* NSEC_PER_MSEC/);
-  assert.match(helper, /500\.0 \* NSEC_PER_MSEC/);
+  assert.match(helper, /250\.0 \* NSEC_PER_MSEC/);
   assert.match(helper, /statusItemWithLength:24\.0/);
-  assert.doesNotMatch(helper, /SBPrimaryStatusItemAutosaveName/);
+  assert.match(helper, /button\.image = SBSingleSwitchTemplate\(16\.0\)/);
+  assert.match(helper, /button\.imagePosition = NSImageOnly/);
+  assert.match(helper, /button\.contentTintColor = nil/);
+  assert.doesNotMatch(helper, /SBPassthroughImageView/);
+  assert.doesNotMatch(helper, /NSForegroundColorAttributeName: NSColor\.clearColor/);
+  assert.doesNotMatch(helper, /SBStatusItem\.autosaveName =/);
   assert.doesNotMatch(helper, /_initWithStatusBar:length:priority:systemInsertOrder:activeItem:/);
-  assert.doesNotMatch(helper, /setAutosaveName:/);
   assert.doesNotMatch(helper, /_insertStatusItem:/);
   assert.doesNotMatch(helper, /_wakeStatusItem/);
   assert.doesNotMatch(helper, /SBStatusItemBehaviorNeverClip/);
   assert.doesNotMatch(helper, /_setDropPriority:/);
   assert.doesNotMatch(helper, /OneTouchStatusDebug/);
-  assert.doesNotMatch(helper, /removeStatusItem/);
-  assert.doesNotMatch(helper, /SBStatusItem\.visible = YES/);
+  assert.match(helper, /removeStatusItem:SBStatusItem/);
+  assert.match(helper, /SBStatusItem\.visible = YES/);
+  assert.match(helper, /SBRepairStatusItem\(generation, attempt \+ 1\)/);
+  assert.match(helper, /convertRect:button\.bounds toView:nil/);
 });

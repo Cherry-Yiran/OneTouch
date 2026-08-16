@@ -3,15 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const app = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
-const resolutionPanel = await readFile(new URL('./ResolutionPanel.jsx', import.meta.url), 'utf8');
 const diskPanel = await readFile(new URL('./DiskPanel.jsx', import.meta.url), 'utf8');
 const styles = await readFile(new URL('./styles.css', import.meta.url), 'utf8');
 
-test('full-page secondary views share the same enter and exit transition', () => {
-  for (const panel of [resolutionPanel, diskPanel]) {
-    assert.match(panel, /secondary-panel/);
-    assert.match(panel, /is-closing/);
-  }
+test('the remaining disk secondary view keeps its enter and exit transition', () => {
+  assert.match(diskPanel, /secondary-panel/);
+  assert.match(diskPanel, /is-closing/);
   assert.match(styles, /@keyframes secondary-panel-enter/);
   assert.match(styles, /@keyframes secondary-panel-exit/);
   assert.match(styles, /\.secondary-panel\.is-closing/);

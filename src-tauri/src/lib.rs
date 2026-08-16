@@ -69,7 +69,7 @@ const ALL_CONTROL_IDS: [&str; 30] = [
 const PREFERENCES_DOMAIN: &str = "design.ryan.switchboard.menubar.v2";
 const PREVIOUS_INPUT_VOLUME_KEY: &str = "previousInputVolume";
 const EJECT_EXCLUSIONS_KEY: &str = "ejectExclusions";
-const TRUSTED_UPDATE_EXECUTABLE: &str = "/Applications/OneTouch.app/Contents/MacOS/onetouch";
+const TRUSTED_UPDATE_EXECUTABLE: &str = "/Applications/OneTouch.app/Contents/MacOS/OneTouch";
 const TRUSTED_UPDATE_TEMP_ROOT: &str = "/private/tmp";
 const UPDATE_CHECK_ATTEMPTS: usize = 3;
 const UPDATE_DOWNLOAD_ATTEMPTS: usize = 3;
@@ -78,9 +78,12 @@ const UPDATE_CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 const UPDATE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(target_os = "macos")]
-const LEGACY_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch";
+const LEGACY_WEBKIT_BUNDLE_IDS: [&str; 2] =
+    ["design.ryan.onetouch.menubar", "design.ryan.onetouch"];
 #[cfg(target_os = "macos")]
-const CURRENT_WEBKIT_BUNDLE_ID: &str = "design.ryan.onetouch.menubar";
+const CURRENT_WEBKIT_BUNDLE_ID: &str = "com.cherryyiran.onetouch";
+#[cfg(target_os = "macos")]
+const LEGACY_CAFFEINATE_COMMAND: [&str; 2] = ["/usr/bin/caffeinate", "-dimsu"];
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,17 +267,20 @@ fn migrate_legacy_webkit_data_in(library_directory: &Path) -> std::io::Result<bo
         .join("Application Support")
         .join("OneTouch")
         .join("Migrations")
-        .join("webkit-bundle-identity-v1.complete");
+        .join("webkit-bundle-identity-v2.complete");
     if marker.exists() {
         return Ok(false);
     }
 
     let webkit_directory = library_directory.join("WebKit");
-    let source = webkit_directory.join(LEGACY_WEBKIT_BUNDLE_ID);
+    let source = LEGACY_WEBKIT_BUNDLE_IDS
+        .iter()
+        .map(|bundle_id| webkit_directory.join(bundle_id))
+        .find(|candidate| candidate.is_dir());
     let destination = webkit_directory.join(CURRENT_WEBKIT_BUNDLE_ID);
     let mut migrated = false;
 
-    if source.is_dir() && !destination.exists() {
+    if let Some(source) = source.filter(|_| !destination.exists()) {
         let temporary_destination = webkit_directory.join(format!(
             ".{CURRENT_WEBKIT_BUNDLE_ID}.migration-{}",
             std::process::id()
@@ -300,7 +306,10 @@ fn migrate_legacy_webkit_data_in(library_directory: &Path) -> std::io::Result<bo
     }
     fs::write(
         marker,
-        format!("{LEGACY_WEBKIT_BUNDLE_ID} -> {CURRENT_WEBKIT_BUNDLE_ID}\n"),
+        format!(
+            "{} -> {CURRENT_WEBKIT_BUNDLE_ID}\n",
+            LEGACY_WEBKIT_BUNDLE_IDS.join(", ")
+        ),
     )?;
     Ok(migrated)
 }
@@ -335,6 +344,13 @@ unsafe extern "C" {
     fn sb_native_popover_update_json(model_json: *const c_char) -> c_int;
     fn sb_native_popover_show() -> c_int;
     fn sb_native_popover_show_persistent() -> c_int;
+    fn sb_native_resolution_menu_show(
+        use_chinese: c_int,
+        display_id: *mut u32,
+        mode_id: *mut i32,
+        width: *mut u32,
+        height: *mut u32,
+    ) -> c_int;
     fn sb_native_popover_toggle() -> c_int;
     fn sb_native_popover_hide();
     fn sb_native_popover_hide_for_app_window();
@@ -454,6 +470,15 @@ struct DisplayOption {
 #[serde(rename_all = "camelCase")]
 struct DisplayConfiguration {
     displays: Vec<DisplayOption>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayModeChoice {
+    display_id: u32,
+    mode_id: i32,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1217,12 +1242,98 @@ fn set_awake(enabled: bool, state: &NativeState) -> Result<(), String> {
                 .map_err(|error| format!("Unable to start caffeinate: {error}"))?;
             *caffeinate = Some(child);
         }
-    } else if let Some(mut child) = caffeinate.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+    } else {
+        if let Some(mut child) = caffeinate.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        #[cfg(target_os = "macos")]
+        cleanup_legacy_caffeinate_processes()?;
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_caffeinate_candidate_pids(ps_output: &str) -> Vec<u32> {
+    ps_output
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() != 4 || fields[2..] != LEGACY_CAFFEINATE_COMMAND {
+                return None;
+            }
+            let pid = fields[0].parse::<u32>().ok()?;
+            let parent_pid = fields[1].parse::<u32>().ok()?;
+            (pid > 1 && parent_pid == 1).then_some(pid)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_caffeinate_is_from_onetouch(lsof_output: &str) -> bool {
+    LEGACY_WEBKIT_BUNDLE_IDS.iter().any(|bundle_id| {
+        lsof_output.contains(&format!("/C/{bundle_id}/"))
+            || lsof_output.contains(&format!("/C/{bundle_id}\n"))
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_legacy_caffeinate_processes() -> Result<(), String> {
+    let ps_output = Command::new("/bin/ps")
+        .args(["-axo", "pid=,ppid=,command="])
+        .output()
+        .map_err(|error| format!("Unable to inspect legacy keep-awake processes: {error}"))?;
+    if !ps_output.status.success() {
+        return Err("Unable to inspect legacy keep-awake processes".to_string());
+    }
+
+    let ps_output = String::from_utf8_lossy(&ps_output.stdout);
+    for pid in legacy_caffeinate_candidate_pids(&ps_output) {
+        let pid_string = pid.to_string();
+        let lsof_output = Command::new("/usr/sbin/lsof")
+            .args(["-Fn", "-p", &pid_string])
+            .output()
+            .map_err(|error| format!("Unable to identify legacy keep-awake process: {error}"))?;
+        if !legacy_caffeinate_is_from_onetouch(&String::from_utf8_lossy(&lsof_output.stdout)) {
+            continue;
+        }
+
+        let status = Command::new("/bin/kill")
+            .args(["-TERM", &pid_string])
+            .status()
+            .map_err(|error| format!("Unable to stop legacy keep-awake process: {error}"))?;
+        if !status.success() {
+            return Err(format!("Unable to stop legacy keep-awake process {pid}"));
+        }
+        eprintln!("OneTouch stopped legacy keep-awake process {pid}");
+    }
+
+    Ok(())
+}
+
+fn caffeinate_process_active(process: &Mutex<Option<Child>>) -> bool {
+    let Ok(mut process) = process.lock() else {
+        return false;
+    };
+    let Some(child) = process.as_mut() else {
+        return false;
+    };
+    match child.try_wait() {
+        Ok(None) => true,
+        Ok(Some(_)) => {
+            process.take();
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+fn refresh_finder_if_running() {
+    // The preference write is the source of truth. Finder may not currently
+    // have a process (for example after it was quit), so a failed best-effort
+    // refresh must not turn a successful switch into an error.
+    let _ = run_process("/usr/bin/killall", &["Finder"]);
 }
 
 fn set_desktop_hidden(enabled: bool) -> Result<(), String> {
@@ -1236,7 +1347,8 @@ fn set_desktop_hidden(enabled: bool) -> Result<(), String> {
             if enabled { "false" } else { "true" },
         ],
     )?;
-    run_process("/usr/bin/killall", &["Finder"])
+    refresh_finder_if_running();
+    Ok(())
 }
 
 fn set_dark_mode(enabled: bool) -> Result<(), String> {
@@ -1397,7 +1509,8 @@ fn set_hidden_files_visible(enabled: bool) -> Result<(), String> {
             if enabled { "true" } else { "false" },
         ],
     )?;
-    run_process("/usr/bin/killall", &["Finder"])
+    refresh_finder_if_running();
+    Ok(())
 }
 
 fn set_music_playing(enabled: bool, state: &NativeState) -> Result<(), String> {
@@ -1891,11 +2004,7 @@ fn native_state_values(
     );
     values.insert("spotify".into(), spotify_state.unwrap_or(false));
 
-    let awake = state
-        .caffeinate
-        .lock()
-        .map(|process| process.is_some())
-        .unwrap_or(false);
+    let awake = caffeinate_process_active(&state.caffeinate);
     values.insert("awake".into(), awake);
     values.insert("airpods".into(), audio_device.connected);
     values.insert("cleanScreen".into(), clean_screen_active());
@@ -2035,6 +2144,42 @@ async fn set_display_mode(display_id: u32, mode_id: i32) -> Result<DisplayConfig
 }
 
 #[tauri::command]
+fn show_resolution_menu(language: String) -> Result<Option<DisplayModeChoice>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut display_id = 0;
+        let mut mode_id = 0;
+        let mut width = 0;
+        let mut height = 0;
+        let result = unsafe {
+            sb_native_resolution_menu_show(
+                c_int::from(language == "zh"),
+                &mut display_id,
+                &mut mode_id,
+                &mut width,
+                &mut height,
+            )
+        };
+        return match result {
+            1 => Ok(Some(DisplayModeChoice {
+                display_id,
+                mode_id,
+                width,
+                height,
+            })),
+            0 => Ok(None),
+            _ => Err("macOS could not present the native resolution menu".to_string()),
+        };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = language;
+        Err("Display resolution control is only available on macOS".to_string())
+    }
+}
+
+#[tauri::command]
 fn open_preferences(app: AppHandle, pane: Option<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -2137,14 +2282,28 @@ async fn install_native_app_update(app: AppHandle) -> Result<(), NativeUpdateErr
         .map_err(|error| native_update_error("install", error))
 }
 
-#[tauri::command]
-fn quit_app(app: AppHandle) {
+fn stop_transient_features(state: &NativeState) {
     let _ = set_clean_screen(false);
     let _ = set_keyboard_locked(false);
-    {
-        let state = app.state::<NativeState>();
-        let _ = set_awake(false, state.inner());
+    let _ = set_awake(false, state);
+}
+
+fn stop_timed_system_controls_on_quit(ids: &[String], state: &NativeState) {
+    for id in ids.iter().collect::<HashSet<_>>() {
+        if !matches!(id.as_str(), "darkMode" | "dnd") {
+            continue;
+        }
+        if let Err(error) = set_switch_blocking((*id).clone(), false, state) {
+            eprintln!("OneTouch could not stop timed control {id} while quitting: {error}");
+        }
     }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle, timed_control_ids: Vec<String>) {
+    let state = app.state::<NativeState>();
+    stop_timed_system_controls_on_quit(&timed_control_ids, state.inner());
+    stop_transient_features(state.inner());
     app.exit(0);
 }
 
@@ -2393,22 +2552,6 @@ fn show_popover(app: AppHandle) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn show_legacy_popover(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        sb_native_popover_hide();
-    }
-    let window = app
-        .get_webview_window("popover")
-        .ok_or_else(|| "The popover window is unavailable".to_string())?;
-    position_popover(&app, &window, None);
-    if !show_popover_with_native_animation(&window) {
-        window.show().map_err(|error| error.to_string())?;
-    }
-    window.set_focus().map_err(|error| error.to_string())
-}
-
 fn toggle_popover(app: &AppHandle, anchor_rect: tauri::Rect) {
     let Some(window) = app.get_webview_window("popover") else {
         return;
@@ -2573,6 +2716,10 @@ pub fn run() {
     if let Err(error) = migrate_legacy_webkit_data() {
         eprintln!("OneTouch could not migrate its previous WebKit settings: {error}");
     }
+    #[cfg(target_os = "macos")]
+    if let Err(error) = cleanup_legacy_caffeinate_processes() {
+        eprintln!("OneTouch could not clean up its legacy keep-awake process: {error}");
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -2588,6 +2735,7 @@ pub fn run() {
             get_native_snapshot,
             get_display_configuration,
             set_display_mode,
+            show_resolution_menu,
             get_external_disks,
             set_eject_exclusions,
             check_native_app_update,
@@ -2597,7 +2745,6 @@ pub fn run() {
             quit_app,
             resize_popover,
             show_popover,
-            show_legacy_popover,
             update_native_popover,
             update_native_preferences,
             update_accessibility_guide,
@@ -2712,7 +2859,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 let state = app_handle.state::<NativeState>();
-                let _ = set_awake(false, state.inner());
+                stop_transient_features(state.inner());
             }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
@@ -2744,6 +2891,7 @@ mod tests {
         assert!(validate_update_executable(Path::new(TRUSTED_UPDATE_EXECUTABLE)).is_ok());
         for malicious in [
             "/tmp/OneTouch.app/Contents/MacOS/onetouch",
+            "/Applications/OneTouch.app/Contents/MacOS/onetouch",
             "/Applications/OneTouch'.app/Contents/MacOS/onetouch",
             "/Applications/OneTouch\".app/Contents/MacOS/onetouch",
             "/Applications/OneTouch.app/Contents/MacOS/../MacOS/onetouch",
@@ -2766,7 +2914,35 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    use super::migrate_legacy_webkit_data_in;
+    use super::{
+        legacy_caffeinate_candidate_pids, legacy_caffeinate_is_from_onetouch,
+        migrate_legacy_webkit_data_in,
+    };
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn identifies_only_orphaned_legacy_onetouch_caffeinate_commands() {
+        let processes = "\
+ 101 1 /usr/bin/caffeinate -dimsu\n\
+ 102 77 /usr/bin/caffeinate -dimsu\n\
+ 103 1 /usr/bin/caffeinate -dimsu -w 77\n\
+ 104 1 /usr/bin/caffeinate -s\n\
+ 105 1 /usr/bin/caffeinate -dimsu\n";
+        assert_eq!(legacy_caffeinate_candidate_pids(processes), vec![101, 105]);
+
+        assert!(legacy_caffeinate_is_from_onetouch(
+            "n/private/var/folders/example/C/design.ryan.onetouch.menubar/cache"
+        ));
+        assert!(legacy_caffeinate_is_from_onetouch(
+            "n/private/var/folders/example/C/design.ryan.onetouch/cache"
+        ));
+        assert!(!legacy_caffeinate_is_from_onetouch(
+            "n/private/var/folders/example/C/com.someone.else/cache"
+        ));
+        assert!(!legacy_caffeinate_is_from_onetouch(
+            "n/private/var/folders/example/C/com.cherryyiran.onetouch/cache"
+        ));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
@@ -2787,7 +2963,7 @@ mod tests {
         ));
         let legacy_storage = root
             .join("WebKit")
-            .join("design.ryan.onetouch")
+            .join("design.ryan.onetouch.menubar")
             .join("WebsiteData")
             .join("Default")
             .join("origin")
@@ -2799,7 +2975,7 @@ mod tests {
         assert!(migrate_legacy_webkit_data_in(&root).unwrap());
         let migrated_storage = root
             .join("WebKit")
-            .join("design.ryan.onetouch.menubar")
+            .join("com.cherryyiran.onetouch")
             .join("WebsiteData")
             .join("Default")
             .join("origin")
@@ -2815,7 +2991,7 @@ mod tests {
             .join("Application Support")
             .join("OneTouch")
             .join("Migrations")
-            .join("webkit-bundle-identity-v1.complete")
+            .join("webkit-bundle-identity-v2.complete")
             .exists());
 
         std::fs::remove_dir_all(root).unwrap();
@@ -2989,21 +3165,21 @@ mod tests {
     fn native_status_item_uses_the_migrated_bundle_identity_and_public_appkit_api() {
         let helper = include_str!("macos_helper.m");
         let config = include_str!("../tauri.conf.json");
-        assert!(config.contains("\"identifier\": \"design.ryan.onetouch.menubar\""));
+        assert!(config.contains("\"identifier\": \"com.cherryyiran.onetouch\""));
+        assert!(config.contains("\"mainBinaryName\": \"OneTouch\""));
         assert!(!helper.contains("NSStatusItem Visible "));
         assert!(!helper.contains("NSStatusItem VisibleCC "));
         assert!(helper.contains("statusItemWithLength:24.0"));
         assert!(!helper.contains("SBStatusItem.length ="));
-        assert!(helper.contains("initWithString:@\"P\""));
-        assert!(helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
-        assert!(helper.contains("@interface SBPassthroughImageView"));
-        assert!(helper.contains("SBStatusIconView.contentTintColor = nil"));
-        assert!(!helper.contains("SBStatusIconView.contentTintColor = NSColor.whiteColor"));
+        assert!(helper.contains("button.image = SBSingleSwitchTemplate(16.0)"));
+        assert!(helper.contains("button.imagePosition = NSImageOnly"));
+        assert!(helper.contains("button.contentTintColor = nil"));
+        assert!(!helper.contains("@interface SBPassthroughImageView"));
+        assert!(!helper.contains("NSForegroundColorAttributeName: NSColor.clearColor"));
         assert!(
             !helper.contains("_initWithStatusBar:length:priority:systemInsertOrder:activeItem:")
         );
-        assert!(!helper.contains("SBPrimaryStatusItemAutosaveName"));
-        assert!(!helper.contains("setAutosaveName:"));
+        assert!(!helper.contains("SBStatusItem.autosaveName ="));
         assert!(!helper.contains("_insertStatusItem:"));
         assert!(!helper.contains("_wakeStatusItem"));
         assert!(!helper.contains("SBStatusItemBehaviorNeverClip"));
@@ -3012,11 +3188,13 @@ mod tests {
         assert!(helper.contains("SBEnsureStatusItemAvailable"));
         assert!(helper.contains("NSContainsRect(screen.frame, frame)"));
         assert!(helper.contains("150.0 * NSEC_PER_MSEC"));
-        assert!(helper.contains("500.0 * NSEC_PER_MSEC"));
+        assert!(helper.contains("250.0 * NSEC_PER_MSEC"));
         assert!(helper.contains("return -2;"));
         assert!(helper.contains("result = SBEnsureStatusItemAvailable();"));
-        assert!(!helper.contains("removeStatusItem"));
-        assert!(!helper.contains("SBStatusItem.visible = YES"));
+        assert!(helper.contains("removeStatusItem:SBStatusItem"));
+        assert!(helper.contains("SBStatusItem.visible = YES"));
+        assert!(helper.contains("SBRepairStatusItem(generation, attempt + 1)"));
+        assert!(helper.contains("convertRect:button.bounds toView:nil"));
         assert!(helper.contains("disableAutomaticTermination"));
         assert!(helper.contains("disableSuddenTermination"));
     }
@@ -3308,7 +3486,9 @@ mod tests {
         assert!(source.contains(".args([\"-dimsu\", \"-w\", &owner_pid])"));
         assert!(source.contains("impl Drop for NativeState"));
         assert!(source.contains("if matches!(event, tauri::RunEvent::Exit)"));
-        assert!(source.contains("let _ = set_awake(false, state.inner());"));
+        assert!(source.contains("fn stop_transient_features(state: &NativeState)"));
+        assert!(source.contains("let _ = set_awake(false, state);"));
+        assert!(source.contains("stop_transient_features(state.inner());"));
     }
 
     #[test]
@@ -3407,8 +3587,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn reads_active_display_modes_without_changing_them() {
-        let configuration = super::native_display_configuration()
-            .expect("active display configuration should be readable");
+        let configuration = match super::native_display_configuration() {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                assert_eq!(error, "No active displays were found");
+                return;
+            }
+        };
         assert!(!configuration.displays.is_empty());
         for display in configuration.displays {
             assert!(!display.name.is_empty());

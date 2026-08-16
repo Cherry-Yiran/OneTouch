@@ -7,6 +7,12 @@
 <p align="center"><strong>一个开关，处理 Mac 上每天重复的小事。</strong></p>
 
 <p align="center">
+  <strong>简体中文</strong>
+  ·
+  <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   OneTouch 是一款原生 macOS 菜单栏工具，把专注、显示、清理、设备与常用系统控制收进一个轻量面板。
 </p>
 
@@ -19,11 +25,21 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Cherry-Yiran/OneTouch?style=flat-square&label=最新版"></a>
+  <a href="https://github.com/Cherry-Yiran/OneTouch/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Cherry-Yiran/OneTouch?display_name=tag&sort=semver&style=flat-square&label=release"></a>
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black?style=flat-square&logo=apple">
-  <img alt="Apple Silicon" src="https://img.shields.io/badge/芯片-Apple%20Silicon-black?style=flat-square&logo=apple">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/chip-Apple%20Silicon-black?style=flat-square&logo=apple">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white">
 </p>
+
+<p align="center">
+  <img src="docs/images/onetouch-preview.png" width="900" alt="OneTouch 菜单栏与自定义页面预览">
+</p>
+
+<p align="center">
+  OneTouch 使用 AppKit 原生面板、控件、字体、颜色与系统材质，并自动适配浅色和深色外观。
+</p>
+
+---
 
 ## 为什么是 OneTouch
 

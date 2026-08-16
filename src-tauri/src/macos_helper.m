@@ -35,7 +35,6 @@ typedef void (*SBNativePreferencesCallback)(const char *action, const char *cont
                                             const char *payload);
 static __strong NSStatusItem *SBStatusItem;
 static __strong NSObject *SBStatusTargetInstance;
-static __strong NSImageView *SBStatusIconView;
 static SBStatusItemCallback SBStatusCallback = NULL;
 static SBNativePopoverCallback SBNativePopoverActionCallback = NULL;
 static SBNativePreferencesCallback SBNativePreferencesActionCallback = NULL;
@@ -75,18 +74,21 @@ static int SBSetControlCenterCheckbox(NSString *menuIdentifier, NSString *checkb
 @interface SBStatusTarget : NSObject
 @end
 
-@interface SBPassthroughImageView : NSImageView
-@end
-
 @interface SBTimerMenuTarget : NSObject
 @property(nonatomic, assign) NSInteger selectedTag;
 - (void)selectDuration:(NSMenuItem *)sender;
+@end
+
+@interface SBResolutionMenuTarget : NSObject
+@property(nonatomic, strong) NSDictionary *selectedMode;
+- (void)selectMode:(NSMenuItem *)sender;
 @end
 
 @interface SBNativeControlTarget : NSObject
 @property(nonatomic, copy) NSString *controlID;
 @property(nonatomic, copy) NSString *actionName;
 @property(nonatomic, assign) BOOL timed;
+@property(nonatomic, assign) BOOL choice;
 @property(nonatomic, assign) BOOL useChinese;
 @property(nonatomic, weak) NSControl *control;
 - (void)performControlAction:(NSControl *)sender;
@@ -192,6 +194,7 @@ static void SBActivateForNativePopover(void) {
 
 static void SBShowNativePopover(BOOL persistent);
 static void SBHideNativePopover(BOOL restorePreviousApplication);
+char *sb_display_configuration_json(void);
 
 static void SBRestorePreviousApplicationAfterPopover(void) {
     NSRunningApplication *previous = SBPreviousFrontmostApplication;
@@ -239,6 +242,75 @@ static NSInteger SBShowTimerMenuForView(NSView *view, BOOL useChinese) {
     return target.selectedTag;
 }
 
+static NSDictionary *SBShowResolutionMenuForView(NSView *view, BOOL useChinese) {
+    char *configurationJSON = sb_display_configuration_json();
+    if (configurationJSON == NULL) return nil;
+    NSData *data = [NSData dataWithBytes:configurationJSON length:strlen(configurationJSON)];
+    free(configurationJSON);
+
+    NSError *error = nil;
+    NSDictionary *configuration = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+    NSArray<NSDictionary *> *displays = [configuration[@"displays"] isKindOfClass:NSArray.class]
+        ? configuration[@"displays"]
+        : @[];
+    if (error != nil || displays.count == 0) return nil;
+
+    SBResolutionMenuTarget *target = [SBResolutionMenuTarget new];
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    menu.autoenablesItems = NO;
+    menu.minimumWidth = 184.0;
+
+    for (NSDictionary *display in displays) {
+        NSMenu *destination = menu;
+        if (displays.count > 1) {
+            NSString *displayName = [display[@"name"] isKindOfClass:NSString.class]
+                ? display[@"name"]
+                : (useChinese ? @"显示器" : @"Display");
+            NSMenuItem *displayItem = [[NSMenuItem alloc] initWithTitle:displayName
+                                                                 action:nil
+                                                          keyEquivalent:@""];
+            NSMenu *submenu = [[NSMenu alloc] initWithTitle:displayName];
+            submenu.autoenablesItems = NO;
+            displayItem.submenu = submenu;
+            [menu addItem:displayItem];
+            destination = submenu;
+        }
+
+        NSArray<NSDictionary *> *modes = [display[@"modes"] isKindOfClass:NSArray.class]
+            ? display[@"modes"]
+            : @[];
+        for (NSDictionary *mode in modes) {
+            NSString *quality = [mode[@"hiDpi"] boolValue]
+                ? @"HiDPI"
+                : (useChinese ? @"标准" : @"Standard");
+            NSString *title = [NSString stringWithFormat:@"%@ × %@ — %@",
+                               mode[@"width"] ?: @0,
+                               mode[@"height"] ?: @0,
+                               quality];
+            NSMutableDictionary *selection = [mode mutableCopy];
+            selection[@"displayId"] = display[@"id"] ?: @0;
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                          action:@selector(selectMode:)
+                                                   keyEquivalent:@""];
+            item.target = target;
+            item.representedObject = selection;
+            item.enabled = YES;
+            item.state = [mode[@"current"] boolValue]
+                ? NSControlStateValueOn
+                : NSControlStateValueOff;
+            [destination addItem:item];
+        }
+    }
+
+    [menu update];
+    NSSize menuSize = menu.size;
+    CGFloat x = NSMaxX(view.bounds) - MAX(menuSize.width, menu.minimumWidth);
+    [menu popUpMenuPositioningItem:nil
+                       atLocation:NSMakePoint(x, NSMinY(view.bounds) - 5.0)
+                           inView:view];
+    return target.selectedMode;
+}
+
 static NSImage *SBSingleSwitchTemplate(CGFloat width) {
     CGFloat height = round(width * 0.58);
     NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(width, height)];
@@ -270,45 +342,32 @@ static NSImage *SBSingleSwitchTemplate(CGFloat width) {
 static void SBUpdateStatusImage(void) {
     if (SBStatusItem.button == nil) return;
     NSButton *button = SBStatusItem.button;
-
-    // macOS 26 can park a newly created image-only status item in a screen-edge
-    // holding window even though NSStatusItem.isVisible remains YES. A real
-    // (but visually transparent) text title keeps the item in the menu bar.
-    // Draw the authored template icon in a pass-through overlay so AppKit can
-    // apply the menu bar's current appearance while the whole 24 pt button
-    // remains clickable.
-    button.image = nil;
-    button.imagePosition = NSNoImage;
-    button.attributedTitle = [[NSAttributedString alloc]
-        initWithString:@"P"
-            attributes:@{
-                NSForegroundColorAttributeName: NSColor.clearColor,
-                NSFontAttributeName: [NSFont systemFontOfSize:1.0],
-            }];
-    if (SBStatusIconView == nil) {
-        SBStatusIconView = [[SBPassthroughImageView alloc] initWithFrame:NSZeroRect];
-        SBStatusIconView.translatesAutoresizingMaskIntoConstraints = NO;
-        SBStatusIconView.imageScaling = NSImageScaleNone;
-        SBStatusIconView.accessibilityElement = NO;
-        [button addSubview:SBStatusIconView];
-        [NSLayoutConstraint activateConstraints:@[
-            [SBStatusIconView.centerXAnchor constraintEqualToAnchor:button.centerXAnchor],
-            [SBStatusIconView.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
-            [SBStatusIconView.widthAnchor constraintEqualToConstant:18.0],
-            [SBStatusIconView.heightAnchor constraintEqualToConstant:18.0],
-        ]];
-    }
-    SBStatusIconView.image = SBSingleSwitchTemplate(16.0);
-    // Keep the standard AppKit rendering pipeline. A nil content tint lets the
-    // template image follow the menu bar's light/dark and accessibility state.
-    SBStatusIconView.contentTintColor = nil;
+    // Keep the icon on the native NSStatusBarButton. macOS 26 renders status
+    // items through its menu-bar host and does not reliably composite custom
+    // subviews added over a transparent button title. A template NSImage is
+    // the public AppKit path and automatically follows the menu bar appearance.
+    button.title = @"";
+    button.image = SBSingleSwitchTemplate(16.0);
+    button.imagePosition = NSImageOnly;
+    button.imageScaling = NSImageScaleNone;
+    button.contentTintColor = nil;
     button.accessibilityLabel = @"OneTouch";
 }
 
 static BOOL SBCreateStatusItem(void) {
     if (SBStatusItem != nil) return YES;
     SBStatusItem = [NSStatusBar.systemStatusBar statusItemWithLength:24.0];
+    SBStatusItem.visible = YES;
     return SBStatusItem != nil;
+}
+
+static void SBDestroyStatusItem(void) {
+    if (SBStatusItem == nil) return;
+    NSButton *button = SBStatusItem.button;
+    button.target = nil;
+    button.action = nil;
+    [NSStatusBar.systemStatusBar removeStatusItem:SBStatusItem];
+    SBStatusItem = nil;
 }
 
 static BOOL SBStatusItemHasScreenAnchor(void) {
@@ -316,7 +375,8 @@ static BOOL SBStatusItemHasScreenAnchor(void) {
     NSWindow *window = button.window;
     if (button == nil || window == nil || !window.isVisible) return NO;
 
-    NSRect frame = [window convertRectToScreen:button.frame];
+    NSRect frameInWindow = [button convertRect:button.bounds toView:nil];
+    NSRect frame = [window convertRectToScreen:frameInWindow];
     NSScreen *screen = window.screen ?: NSScreen.mainScreen;
     if (screen == nil || NSWidth(frame) < 1.0 || NSHeight(frame) < 1.0) return NO;
 
@@ -345,6 +405,33 @@ static BOOL SBConfigureStatusItem(void) {
     return YES;
 }
 
+static void SBRepairStatusItem(NSUInteger generation, NSUInteger attempt) {
+    if (generation != SBStatusItemRepairGeneration ||
+        SBStatusItemHasScreenAnchor()) return;
+
+    // A status item can be created before AppKit has attached its button to a
+    // real menu-bar window. Reconfiguring that detached object cannot recover
+    // it, so remove it through the public API and create a fresh item after the
+    // application has completed another main-run-loop pass.
+    SBDestroyStatusItem();
+    if (!SBConfigureStatusItem()) {
+        NSLog(@"OneTouch could not recreate its menu bar status item");
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(250.0 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        if (generation != SBStatusItemRepairGeneration ||
+            SBStatusItemHasScreenAnchor()) return;
+        if (attempt >= 3) {
+            NSLog(@"OneTouch menu bar status item still has no screen anchor");
+            return;
+        }
+        SBRepairStatusItem(generation, attempt + 1);
+    });
+}
+
 // 0 means the item has a real screen anchor, -1 means AppKit could not create
 // the item, and -2 means the item exists but is still parked off-screen.
 static int SBEnsureStatusItemAvailable(void) {
@@ -355,18 +442,7 @@ static int SBEnsureStatusItemAvailable(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                  (int64_t)(150.0 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{
-        if (generation != SBStatusItemRepairGeneration ||
-            SBStatusItemHasScreenAnchor()) return;
-        if (!SBConfigureStatusItem()) {
-            NSLog(@"OneTouch could not refresh its menu bar status item");
-        }
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                 (int64_t)(500.0 * NSEC_PER_MSEC)),
-                   dispatch_get_main_queue(), ^{
-        if (generation != SBStatusItemRepairGeneration ||
-            SBStatusItemHasScreenAnchor()) return;
-        NSLog(@"OneTouch menu bar status item still has no screen anchor");
+        SBRepairStatusItem(generation, 1);
     });
     return -2;
 }
@@ -375,17 +451,12 @@ static int SBEnsureStatusItemAvailable(void) {
 - (void)clicked:(id)sender {
     if (SBStatusCallback == NULL || SBStatusItem.button.window == nil) return;
     NSButton *button = SBStatusItem.button;
-    NSRect frame = [button.window convertRectToScreen:button.frame];
+    NSRect frameInWindow = [button convertRect:button.bounds toView:nil];
+    NSRect frame = [button.window convertRectToScreen:frameInWindow];
     NSScreen *screen = button.window.screen ?: NSScreen.mainScreen;
     NSRect screenFrame = screen.frame;
     double flippedY = screenFrame.origin.y + screenFrame.size.height - (frame.origin.y + frame.size.height);
     SBStatusCallback(frame.origin.x, flippedY, frame.size.width, frame.size.height);
-}
-@end
-
-@implementation SBPassthroughImageView
-- (NSView *)hitTest:(NSPoint)point {
-    return nil;
 }
 @end
 
@@ -400,6 +471,14 @@ static int SBEnsureStatusItemAvailable(void) {
 }
 @end
 
+@implementation SBResolutionMenuTarget
+- (void)selectMode:(NSMenuItem *)sender {
+    self.selectedMode = [sender.representedObject isKindOfClass:NSDictionary.class]
+        ? sender.representedObject
+        : nil;
+}
+@end
+
 @implementation SBNativeControlTarget
 - (void)performControlAction:(NSControl *)sender {
     if (self.timed && [sender isKindOfClass:NSSwitch.class] &&
@@ -409,6 +488,13 @@ static int SBEnsureStatusItemAvailable(void) {
             SBEmitNativePopoverAction(@"timer", self.controlID, selection);
         } else {
             ((NSSwitch *)sender).state = NSControlStateValueOff;
+        }
+        return;
+    }
+
+    if (self.choice && [sender isKindOfClass:NSSwitch.class]) {
+        if (((NSSwitch *)sender).state == NSControlStateValueOn) {
+            SBEmitNativePopoverAction(@"choice", self.controlID, 1);
         }
         return;
     }
@@ -1121,7 +1207,8 @@ static void SBPositionNativePopoverPanel(void) {
     NSWindow *statusWindow = button.window;
     if (SBNativePopoverPanel == nil || button == nil || statusWindow == nil) return;
 
-    NSRect anchorFrame = [statusWindow convertRectToScreen:button.frame];
+    NSRect anchorFrameInWindow = [button convertRect:button.bounds toView:nil];
+    NSRect anchorFrame = [statusWindow convertRectToScreen:anchorFrameInWindow];
     NSScreen *screen = statusWindow.screen ?: NSScreen.mainScreen;
     if (screen == nil) return;
 
@@ -1477,6 +1564,8 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
     BOOL locked = [row[@"locked"] boolValue];
     BOOL pending = [row[@"pending"] boolValue];
     NSString *kind = row[@"kind"] ?: @"toggle";
+    BOOL usesSwitch = [kind isEqualToString:@"toggle"] || [kind isEqualToString:@"action"] ||
+        [kind isEqualToString:@"choice"];
 
     NSImageView *icon = [NSImageView new];
     icon.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1506,7 +1595,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
 
     NSControl *affordance = nil;
     SBNativeControlTarget *target = [SBNativeControlTarget new];
-    if ([kind isEqualToString:@"toggle"] || [kind isEqualToString:@"action"]) {
+    if (usesSwitch) {
         NSSwitch *toggle = [NSSwitch new];
         BOOL momentary = [kind isEqualToString:@"action"];
         toggle.state = active ? NSControlStateValueOn : NSControlStateValueOff;
@@ -1515,6 +1604,7 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         target.controlID = row[@"id"] ?: @"";
         target.actionName = momentary ? @"activate" : @"toggle";
         target.timed = !momentary && [row[@"timed"] boolValue] && !active;
+        target.choice = [kind isEqualToString:@"choice"];
         target.useChinese = useChinese;
         target.control = toggle;
         toggle.target = target;
@@ -1711,12 +1801,14 @@ static void SBHideNativePopover(BOOL restorePreviousApplication) {
         BOOL momentary = [kind isEqualToString:@"action"];
         target.actionName = momentary ? @"activate" : @"toggle";
         target.timed = !momentary && [row[@"timed"] boolValue] && !active;
+        target.choice = [kind isEqualToString:@"choice"];
     } else if ([affordance isKindOfClass:NSButton.class]) {
         NSButton *button = (NSButton *)affordance;
         button.title = row[@"actionLabel"] ?: @"";
         button.enabled = enabled && !busy;
         target.actionName = @"activate";
         target.timed = NO;
+        target.choice = NO;
     }
 
 }
@@ -2360,7 +2452,8 @@ static const CGFloat SBNativePreferencesShortcutButtonWidth = 72.0;
         ? NSControlStateValueOn
         : NSControlStateValueOff;
     BOOL loading = [self.model[@"startAtLoginLoading"] boolValue];
-    self.loginSwitch.enabled = !loading;
+    BOOL disabled = [self.model[@"startAtLoginDisabled"] boolValue];
+    self.loginSwitch.enabled = !loading && !disabled;
     NSString *error = self.model[@"startAtLoginError"] ?: @"";
     self.loginNote.stringValue =
         error.length > 0 ? error : (self.strings[@"startAtLoginNote"] ?: @"");
@@ -2988,6 +3081,40 @@ int sb_native_popover_show_persistent(void) {
     return result;
 }
 
+int sb_native_resolution_menu_show(int use_chinese,
+                                   uint32_t *display_id,
+                                   int32_t *mode_id,
+                                   uint32_t *width,
+                                   uint32_t *height) {
+    __block int result = 0;
+    SBRunOnMainSync(^{
+        SBNativePopoverController *controller =
+            [SBNativePopoverPanel.contentViewController isKindOfClass:SBNativePopoverController.class]
+                ? (SBNativePopoverController *)SBNativePopoverPanel.contentViewController
+                : nil;
+        NSDictionary *binding = controller.rowBindings[@"resolution"];
+        NSView *affordance = [binding[@"affordance"] isKindOfClass:NSView.class]
+            ? binding[@"affordance"]
+            : nil;
+        if (affordance == nil || !SBNativePopoverPanel.isVisible) {
+            result = -2;
+            return;
+        }
+
+        NSDictionary *selection = SBShowResolutionMenuForView(affordance, use_chinese != 0);
+        if (selection == nil) {
+            return;
+        }
+
+        if (display_id != NULL) *display_id = [selection[@"displayId"] unsignedIntValue];
+        if (mode_id != NULL) *mode_id = [selection[@"id"] intValue];
+        if (width != NULL) *width = [selection[@"width"] unsignedIntValue];
+        if (height != NULL) *height = [selection[@"height"] unsignedIntValue];
+        result = 1;
+    });
+    return result;
+}
+
 int sb_native_popover_toggle(void) {
     __block int result = 0;
     SBRunOnMainSync(^{
@@ -3080,6 +3207,7 @@ int sb_native_preferences_create(SBNativePreferencesCallback callback) {
             @"xURL": @"",
             @"update": @{ @"phase": @"idle", @"title": @"检查更新", @"status": @"" },
             @"startAtLogin": @NO,
+            @"startAtLoginDisabled": @NO,
             @"startAtLoginLoading": @YES,
             @"rows": @[],
             @"strings": @{
