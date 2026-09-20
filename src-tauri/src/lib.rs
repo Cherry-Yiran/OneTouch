@@ -1612,7 +1612,9 @@ fn aily_env_blocker_keys<I>(keys: I) -> Vec<String>
 where
     I: IntoIterator<Item = String>,
 {
-    keys.into_iter().filter(|key| is_aily_env_blocker(key)).collect()
+    keys.into_iter()
+        .filter(|key| is_aily_env_blocker(key))
+        .collect()
 }
 
 fn augmented_aily_path(current: Option<&str>) -> String {
@@ -1700,11 +1702,15 @@ fn aily_command(wrapper: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Co
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    for key in aily_env_blocker_keys(env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned()))
+    for key in
+        aily_env_blocker_keys(env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned()))
     {
         command.env_remove(key);
     }
-    command.env("PATH", augmented_aily_path(env::var("PATH").ok().as_deref()));
+    command.env(
+        "PATH",
+        augmented_aily_path(env::var("PATH").ok().as_deref()),
+    );
     for (key, value) in extra_env {
         command.env(key, value);
     }
@@ -1714,7 +1720,10 @@ fn aily_command(wrapper: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Co
 /// Unlike `read_process_with_timeout`, this keeps stdout and the exit code when the
 /// process fails, because `daemon status --json` reports "not running" on stdout
 /// with exit code 3 and `daemon stop` reports "already stopped" the same way.
-fn capture_command_with_timeout(mut command: Command, timeout: Duration) -> Result<ProcessCapture, String> {
+fn capture_command_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<ProcessCapture, String> {
     let mut child = command
         .spawn()
         .map_err(|error| format!("aily-cli could not be started: {error}"))?;
@@ -1807,7 +1816,13 @@ fn set_feishu_aily(enabled: bool) -> Result<(), String> {
             aily_command(
                 &wrapper,
                 // No TTY is attached, so the CLI refuses to stop without --yes.
-                &["daemon", "stop", "--yes", "--timeout", AILY_STOP_GRACE_SECONDS],
+                &[
+                    "daemon",
+                    "stop",
+                    "--yes",
+                    "--timeout",
+                    AILY_STOP_GRACE_SECONDS,
+                ],
                 &[],
             ),
             AILY_STOP_TIMEOUT,
@@ -3131,10 +3146,10 @@ mod tests {
         control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
         find_audio_device_battery, is_aily_env_blocker, is_direct_system_toggle,
         parse_aily_daemon_running, parse_defaults_bool, run_process_with_timeout,
-        snapshot_state_known, strip_aily_runtime_build_line, system_settings_url, timer_menu_choice,
-        updater_error_is_retryable, validate_update_executable, DiskutilVolumeInfo,
-        EjectableDiskCandidate, TRUSTED_UPDATE_EXECUTABLE, TRUSTED_UPDATE_TEMP_ROOT,
-        UPDATE_CHECK_ATTEMPTS, UPDATE_DOWNLOAD_ATTEMPTS,
+        snapshot_state_known, strip_aily_runtime_build_line, system_settings_url,
+        timer_menu_choice, updater_error_is_retryable, validate_update_executable,
+        DiskutilVolumeInfo, EjectableDiskCandidate, TRUSTED_UPDATE_EXECUTABLE,
+        TRUSTED_UPDATE_TEMP_ROOT, UPDATE_CHECK_ATTEMPTS, UPDATE_DOWNLOAD_ATTEMPTS,
     };
     use tauri_plugin_updater::Error as UpdaterError;
 
@@ -3949,7 +3964,10 @@ mod tests {
             aily_env_blocker_keys(
                 ["HOME", "AILY_CLI_SURFACE", "PATH", "AILY_CLI_PID_FILE"].map(String::from)
             ),
-            vec!["AILY_CLI_SURFACE".to_string(), "AILY_CLI_PID_FILE".to_string()]
+            vec![
+                "AILY_CLI_SURFACE".to_string(),
+                "AILY_CLI_PID_FILE".to_string()
+            ]
         );
     }
 
@@ -4003,7 +4021,11 @@ mod tests {
         );
         // With --json the CLI writes its error to stdout instead of stderr.
         assert_eq!(
-            aily_failure_message(r#"{"ok":false,"error":{"message":"socket is busy"}}"#, trailer, 1),
+            aily_failure_message(
+                r#"{"ok":false,"error":{"message":"socket is busy"}}"#,
+                trailer,
+                1
+            ),
             r#"{"ok":false,"error":{"message":"socket is busy"}}"#
         );
         assert_eq!(
@@ -4020,10 +4042,7 @@ mod tests {
 
     #[test]
     fn never_shuts_the_aily_daemon_down_when_onetouch_quits() {
-        let production = include_str!("lib.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap();
+        let production = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
         let quit_path = production
             .split("fn stop_transient_features")
             .nth(1)

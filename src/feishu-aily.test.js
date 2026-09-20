@@ -41,7 +41,10 @@ test('aily-cli is invoked by absolute path with a usable PATH and no inherited a
   assert.match(native, /key\.starts_with\("AILY_CLI_"\)/);
   assert.match(native, /command\.env_remove\(key\)/);
   // No TTY is attached, so `daemon stop` refuses to run without --yes.
-  assert.match(native, /"daemon", "stop", "--yes", "--timeout", AILY_STOP_GRACE_SECONDS/);
+  assert.match(
+    native,
+    /\[\s*"daemon",\s*"stop",\s*"--yes",\s*"--timeout",\s*AILY_STOP_GRACE_SECONDS,?\s*\]/,
+  );
   assert.match(native, /\.stdin\(Stdio::null\(\)\)/);
   assert.doesNotMatch(native, /tauri_plugin_shell/);
 });
