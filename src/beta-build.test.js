@@ -19,11 +19,11 @@ const bridge = await readFile(new URL('./nativeBridge.js', import.meta.url), 'ut
 
 test('keeps beta builds distinct from formal releases', () => {
   assert.equal(formalConfig.productName, 'OneTouch');
-  assert.equal(formalConfig.version, '1.1.0');
+  assert.match(formalConfig.version, /^\d+\.\d+\.\d+$/);
   assert.equal(formalConfig.identifier, 'com.cherryyiran.onetouch');
   assert.equal(betaConfig.productName, 'OneTouch Beta');
   assert.equal(betaConfig.mainBinaryName, 'OneTouch Beta');
-  assert.equal(betaConfig.version, '1.1.0-beta.1');
+  assert.equal(betaConfig.version, `${formalConfig.version}-beta.1`);
   assert.equal(packageJson.version, formalConfig.version);
   assert.equal(betaConfig.identifier, 'com.cherryyiran.onetouch.beta');
   assert.notEqual(betaConfig.productName, formalConfig.productName);

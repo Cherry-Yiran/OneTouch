@@ -2,6 +2,24 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-09-20
+
+### 新增
+
+- 新增飞书 Aily 后台服务控制，可在 OneTouch 中直接启动或停止服务，重启 Mac 后无需再次打开终端。
+- 自动检测本机是否安装 `~/.aily-cli/bin/aily-cli`，未安装时明确显示该控制项不可用。
+
+### 改进
+
+- OneTouch 从图形界面启动 Aily 时会补全 Homebrew 与系统命令路径，并隔离继承的 Aily 运行环境，避免错误连接到其他服务实例。
+- Aily 服务的启动、停止与状态读取均设置超时和错误反馈；退出 OneTouch 不会误停用户主动开启的 Aily 服务。
+- 中英文项目说明同步更新，控制项总数增加至 31 项。
+
+### 验证
+
+- 增加 Aily 可用性、状态解析、环境隔离、错误处理和界面注册测试。
+- 发布前继续执行完整界面测试、Rust 测试、生产构建及签名更新包验证。
+
 ## [1.1.0] - 2026-08-16
 
 ### 新增
@@ -177,6 +195,7 @@ OneTouch 进入首个稳定正式版本。
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
+[1.2.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.4...v1.0.0
 [0.3.4]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.3...v0.3.4
