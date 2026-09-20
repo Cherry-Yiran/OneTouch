@@ -32,7 +32,7 @@ use tauri::{
 };
 use tauri_plugin_updater::{Error as UpdaterError, Update, Updater, UpdaterExt};
 
-const ALL_CONTROL_IDS: [&str; 30] = [
+const ALL_CONTROL_IDS: [&str; 31] = [
     "desktop",
     "darkMode",
     "awake",
@@ -63,6 +63,7 @@ const ALL_CONTROL_IDS: [&str; 30] = [
     "lockKeyboard",
     "lockScreen",
     "quitApps",
+    "feishuAily",
 ];
 // Keep native preferences in their legacy domain. WebView-backed settings are
 // migrated separately before the first window is created under the clean ID.
@@ -1581,6 +1582,249 @@ fn refreshed_player_state(
     Some(refreshed)
 }
 
+const AILY_CLI_NOT_INSTALLED: &str = "aily-cli is not installed on this Mac";
+const AILY_STATUS_TIMEOUT: Duration = Duration::from_secs(6);
+const AILY_START_TIMEOUT: Duration = Duration::from_secs(25);
+const AILY_STOP_TIMEOUT: Duration = Duration::from_secs(20);
+/// Graceful window handed to `daemon stop`. Must stay below AILY_STOP_TIMEOUT so
+/// the CLI reports its own diagnostic instead of being killed. CLI default: 40s.
+const AILY_STOP_GRACE_SECONDS: &str = "15";
+/// Readiness deadline handed to `daemon start`. CLI default: 120s.
+const AILY_START_READY_WAIT_MS: &str = "20000";
+/// A GUI-launched .app inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin, which has no
+/// `node`, and the aily runtime execs `"${NODE_BIN:-node}"`.
+const AILY_PATH_PREFIXES: [&str; 4] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+
+fn aily_cli_wrapper_path(home: &Path) -> PathBuf {
+    home.join(".aily-cli").join("bin").join("aily-cli")
+}
+
+/// Any inherited AILY_CLI_* variable changes what the wrapper does:
+/// AILY_CLI_SURFACE=agent-lite removes the whole `daemon` command group, and the
+/// agent-context variables stop the wrapper pinning its own env. It only derives
+/// the socket, pid, lock, log and instance paths when those are empty, so a stale
+/// value would silently point OneTouch at a different daemon. Drop the prefix.
+fn is_aily_env_blocker(key: &str) -> bool {
+    key.starts_with("AILY_CLI_")
+}
+
+fn aily_env_blocker_keys<I>(keys: I) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    keys.into_iter().filter(|key| is_aily_env_blocker(key)).collect()
+}
+
+fn augmented_aily_path(current: Option<&str>) -> String {
+    let mut entries: Vec<&str> = Vec::new();
+    entries.extend(AILY_PATH_PREFIXES.iter().copied());
+    if let Some(current) = current {
+        entries.extend(current.split(':'));
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    entries.retain(|entry| !entry.is_empty() && seen.insert(*entry));
+    entries.join(":")
+}
+
+fn first_json_slice(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    (end > start).then(|| &text[start..=end])
+}
+
+/// `daemon status --json` prints `{"ok":true,"data":{"running":true,…}}` with exit
+/// code 0 when up, and `{"ok":false,"error":{"code":"DAEMON_UNREACHABLE",…}}` with
+/// exit code 3 when down. It never prints `running:false`, so "stopped" has to be
+/// read from the error code and then from the exit status. Anything else — a
+/// surface restriction, a usage error, malformed output — is genuinely unknown:
+/// return None rather than a confident lie.
+fn parse_aily_daemon_running(stdout: &str, exit_code: i32) -> Option<bool> {
+    let payload =
+        first_json_slice(stdout).and_then(|slice| serde_json::from_str::<Value>(slice).ok());
+    if let Some(payload) = payload {
+        if payload.get("ok").and_then(Value::as_bool) == Some(true) {
+            return Some(
+                payload
+                    .pointer("/data/running")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            );
+        }
+        if payload.pointer("/error/code").and_then(Value::as_str) == Some("DAEMON_UNREACHABLE") {
+            return Some(false);
+        }
+        return None;
+    }
+    (exit_code == 3).then_some(false)
+}
+
+/// The runtime appends `Aily runtime build: version=… aggregate=… ref=…` to stderr
+/// on every non-zero exit. Developer noise, never user-facing.
+fn strip_aily_runtime_build_line(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("Aily runtime build:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn first_aily_detail_line(text: &str) -> Option<String> {
+    strip_aily_runtime_build_line(text)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+/// Without --json the CLI writes its error to stderr; with --json it writes to
+/// stdout. Check both.
+fn aily_failure_message(stdout: &str, stderr: &str, exit_code: i32) -> String {
+    first_aily_detail_line(stderr)
+        .or_else(|| first_aily_detail_line(stdout))
+        .unwrap_or_else(|| format!("aily-cli exited with code {exit_code}"))
+}
+
+struct ProcessCapture {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+/// `extra_env` is applied after the blocker sweep so a caller can deliberately set
+/// one AILY_CLI_* knob; the parameter order makes that sequence structural.
+fn aily_command(wrapper: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Command {
+    let mut command = Command::new(wrapper);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for key in aily_env_blocker_keys(env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned()))
+    {
+        command.env_remove(key);
+    }
+    command.env("PATH", augmented_aily_path(env::var("PATH").ok().as_deref()));
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    command
+}
+
+/// Unlike `read_process_with_timeout`, this keeps stdout and the exit code when the
+/// process fails, because `daemon status --json` reports "not running" on stdout
+/// with exit code 3 and `daemon stop` reports "already stopped" the same way.
+fn capture_command_with_timeout(mut command: Command, timeout: Duration) -> Result<ProcessCapture, String> {
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("aily-cli could not be started: {error}"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "aily-cli did not expose its output".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "aily-cli did not expose its diagnostics".to_string())?;
+    let stdout_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stdout.read_to_end(&mut buffer);
+        buffer
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stderr.read_to_end(&mut buffer);
+        buffer
+    });
+    let started = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Ok(ProcessCapture {
+                    code: status.code().unwrap_or(-1),
+                    stdout: String::from_utf8_lossy(&stdout_reader.join().unwrap_or_default())
+                        .trim()
+                        .to_string(),
+                    stderr: String::from_utf8_lossy(&stderr_reader.join().unwrap_or_default())
+                        .trim()
+                        .to_string(),
+                });
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "aily-cli did not respond within {:.0} seconds.",
+                    timeout.as_secs_f64()
+                ));
+            }
+        }
+    }
+}
+
+fn aily_cli_wrapper() -> Option<PathBuf> {
+    let home = env::var_os("HOME").map(PathBuf::from)?;
+    let wrapper = aily_cli_wrapper_path(&home);
+    wrapper.is_file().then_some(wrapper)
+}
+
+fn feishu_aily_available() -> bool {
+    aily_cli_wrapper().is_some()
+}
+
+fn aily_daemon_running() -> Option<bool> {
+    let wrapper = aily_cli_wrapper()?;
+    let capture = capture_command_with_timeout(
+        aily_command(&wrapper, &["daemon", "status", "--json"], &[]),
+        AILY_STATUS_TIMEOUT,
+    )
+    .ok()?;
+    parse_aily_daemon_running(&capture.stdout, capture.code)
+}
+
+/// `daemon start` detaches the daemon and only the reporter is killed on timeout,
+/// so the service outlives OneTouch. Nothing in the quit path may call this with
+/// `false` — the daemon surviving the app is the point of the control.
+fn set_feishu_aily(enabled: bool) -> Result<(), String> {
+    let wrapper = aily_cli_wrapper().ok_or_else(|| AILY_CLI_NOT_INSTALLED.to_string())?;
+    let capture = if enabled {
+        capture_command_with_timeout(
+            aily_command(
+                &wrapper,
+                &["daemon", "start"],
+                &[("AILY_CLI_DAEMON_READY_WAIT_MS", AILY_START_READY_WAIT_MS)],
+            ),
+            AILY_START_TIMEOUT,
+        )?
+    } else {
+        capture_command_with_timeout(
+            aily_command(
+                &wrapper,
+                // No TTY is attached, so the CLI refuses to stop without --yes.
+                &["daemon", "stop", "--yes", "--timeout", AILY_STOP_GRACE_SECONDS],
+                &[],
+            ),
+            AILY_STOP_TIMEOUT,
+        )?
+    };
+    // `daemon start` exits 0 when it was already running; `daemon stop` exits 3
+    // when it was already stopped. Both are the state the user asked for.
+    if capture.code == 0 || (!enabled && capture.code == 3) {
+        return Ok(());
+    }
+    Err(aily_failure_message(
+        &capture.stdout,
+        &capture.stderr,
+        capture.code,
+    ))
+}
+
 fn clean_xcode_derived_data() -> Result<(), String> {
     let home =
         env::var_os("HOME").ok_or_else(|| "The home directory is unavailable".to_string())?;
@@ -1859,6 +2103,7 @@ fn set_switch_blocking(
         "muteMic" => set_microphone_muted(enabled, state),
         "music" => set_music_playing(enabled, state),
         "spotify" => set_spotify_playing(enabled, state),
+        "feishuAily" => set_feishu_aily(enabled),
         "hiddenFiles" => set_hidden_files_visible(enabled),
         "cleanScreen" => set_clean_screen(enabled),
         "lockKeyboard" => set_keyboard_locked(enabled),
@@ -1904,6 +2149,7 @@ fn set_switch_blocking(
         "action" | "settings" => false,
         _ if id == "cleanScreen" => clean_screen_active(),
         _ if id == "lockKeyboard" => keyboard_lock_active(),
+        _ if id == "feishuAily" => aily_daemon_running().unwrap_or(enabled),
         _ if id == "airpods" => native_audio_device_base_snapshot().connected,
         _ => enabled,
     };
@@ -2009,6 +2255,7 @@ fn native_state_values(
     values.insert("airpods".into(), audio_device.connected);
     values.insert("cleanScreen".into(), clean_screen_active());
     values.insert("lockKeyboard".into(), keyboard_lock_active());
+    values.insert("feishuAily".into(), aily_daemon_running().unwrap_or(false));
 
     for id in ALL_CONTROL_IDS {
         values.entry(id.into()).or_insert(false);
@@ -2022,6 +2269,7 @@ fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
     let external_disks = ejectable_disk_list();
     let (external_disks_available, external_disks_message) =
         external_disk_control_status(&external_disks);
+    let aily_available = feishu_aily_available();
     let (values, music_state_known, spotify_state_known) =
         native_state_values(state, &audio_device);
     let controls = ALL_CONTROL_IDS
@@ -2043,6 +2291,7 @@ fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
                         "airpods" => audio_device.paired,
                         "ejectDisk" => external_disks_available,
                         "spotify" => spotify_available(),
+                        "feishuAily" => aily_available,
                         _ => true,
                     };
                     let message = match id {
@@ -2052,6 +2301,7 @@ fn build_native_snapshot(state: &NativeState) -> NativeSnapshot {
                         "spotify" if !available => {
                             Some("Spotify is not installed on this Mac".to_string())
                         }
+                        "feishuAily" if !available => Some(AILY_CLI_NOT_INSTALLED.to_string()),
                         "ejectDisk" if !available => external_disks_message.clone(),
                         _ => None,
                     };
@@ -2877,12 +3127,14 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
+        aily_cli_wrapper_path, aily_env_blocker_keys, aily_failure_message, augmented_aily_path,
         control_mode, ejectable_disk_candidates_from_infos, external_disk_control_status,
-        find_audio_device_battery, parse_defaults_bool, run_process_with_timeout,
-        snapshot_state_known, system_settings_url, timer_menu_choice, updater_error_is_retryable,
-        validate_update_executable, DiskutilVolumeInfo, EjectableDiskCandidate,
-        TRUSTED_UPDATE_EXECUTABLE, TRUSTED_UPDATE_TEMP_ROOT, UPDATE_CHECK_ATTEMPTS,
-        UPDATE_DOWNLOAD_ATTEMPTS,
+        find_audio_device_battery, is_aily_env_blocker, is_direct_system_toggle,
+        parse_aily_daemon_running, parse_defaults_bool, run_process_with_timeout,
+        snapshot_state_known, strip_aily_runtime_build_line, system_settings_url, timer_menu_choice,
+        updater_error_is_retryable, validate_update_executable, DiskutilVolumeInfo,
+        EjectableDiskCandidate, TRUSTED_UPDATE_EXECUTABLE, TRUSTED_UPDATE_TEMP_ROOT,
+        UPDATE_CHECK_ATTEMPTS, UPDATE_DOWNLOAD_ATTEMPTS,
     };
     use tauri_plugin_updater::Error as UpdaterError;
 
@@ -3648,6 +3900,137 @@ mod tests {
 
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn resolves_the_aily_wrapper_from_the_home_directory() {
+        assert_eq!(
+            aily_cli_wrapper_path(Path::new("/Users/ryan")),
+            Path::new("/Users/ryan/.aily-cli/bin/aily-cli")
+        );
+    }
+
+    #[test]
+    fn prepends_the_directories_a_gui_launch_cannot_see() {
+        assert_eq!(
+            augmented_aily_path(Some("/usr/bin:/bin:/usr/sbin:/sbin")),
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        );
+        assert_eq!(
+            augmented_aily_path(None),
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        );
+        assert_eq!(
+            augmented_aily_path(Some("/opt/homebrew/bin::/usr/bin")),
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        );
+    }
+
+    #[test]
+    fn drops_every_inherited_aily_variable_not_just_the_named_blockers() {
+        for key in [
+            "AILY_CLI_SURFACE",
+            "AILY_CLI_CALLER_AGENT_UID",
+            "AILY_CLI_RUN_ID",
+            "AILY_CLI_SESSION_ID",
+            "AILY_CLI_TASK_ID",
+            "AILY_CLI_DAEMON_SOCKET",
+            "AILY_CLI_PID_FILE",
+            "AILY_CLI_LOCK_FILE",
+            "AILY_CLI_DAEMON_LOG",
+            "AILY_CLI_INSTANCE_NAME",
+        ] {
+            assert!(is_aily_env_blocker(key), "{key} must be dropped");
+        }
+        for key in ["HOME", "PATH", "XDG_STATE_HOME", "AILY_CLI", "AILYCLIX"] {
+            assert!(!is_aily_env_blocker(key), "{key} must survive");
+        }
+        assert_eq!(
+            aily_env_blocker_keys(
+                ["HOME", "AILY_CLI_SURFACE", "PATH", "AILY_CLI_PID_FILE"].map(String::from)
+            ),
+            vec!["AILY_CLI_SURFACE".to_string(), "AILY_CLI_PID_FILE".to_string()]
+        );
+    }
+
+    #[test]
+    fn reads_the_daemon_state_from_both_cli_exit_shapes() {
+        let running = r#"{"ok":true,"data":{"running":true,"pid":63685}}"#;
+        assert_eq!(parse_aily_daemon_running(running, 0), Some(true));
+        assert_eq!(
+            parse_aily_daemon_running(&format!("  {running}\n"), 0),
+            Some(true)
+        );
+        // `status` only reaches the success path after confirming the socket and the pid,
+        // so a missing `running` key is still authoritative.
+        assert_eq!(
+            parse_aily_daemon_running(r#"{"ok":true,"data":{}}"#, 0),
+            Some(true)
+        );
+        assert_eq!(
+            parse_aily_daemon_running(r#"{"ok":true,"data":{"running":false}}"#, 0),
+            Some(false)
+        );
+
+        let stopped = r#"{"ok":false,"error":{"code":"DAEMON_UNREACHABLE","message":"daemon not running","hint":"Run: aily-cli daemon start"}}"#;
+        assert_eq!(parse_aily_daemon_running(stopped, 3), Some(false));
+        assert_eq!(parse_aily_daemon_running("", 3), Some(false));
+
+        // Observed: a surface restriction exits 2 with this payload. It parses, but is
+        // neither `ok` nor DAEMON_UNREACHABLE, so it never reaches the exit-code fallback.
+        assert_eq!(
+            parse_aily_daemon_running(
+                r#"{"ok":false,"error":{"code":"aily-cli.surfaceRestricted","message":"Command \"daemon\" is not available when AILY_CLI_SURFACE=agent-lite."}}"#,
+                2
+            ),
+            None
+        );
+        assert_eq!(parse_aily_daemon_running("not json at all", 1), None);
+        assert_eq!(parse_aily_daemon_running("", 0), None);
+    }
+
+    #[test]
+    fn keeps_the_runtime_build_trailer_out_of_user_facing_errors() {
+        let trailer = "Aily runtime build: version=1.2.3 aggregate=abc123 ref=main";
+        let stderr = format!("daemon failed to start within 20000ms\n{trailer}\n");
+        assert_eq!(
+            strip_aily_runtime_build_line(&stderr),
+            "daemon failed to start within 20000ms"
+        );
+        assert_eq!(
+            aily_failure_message("", &stderr, 1),
+            "daemon failed to start within 20000ms"
+        );
+        // With --json the CLI writes its error to stdout instead of stderr.
+        assert_eq!(
+            aily_failure_message(r#"{"ok":false,"error":{"message":"socket is busy"}}"#, trailer, 1),
+            r#"{"ok":false,"error":{"message":"socket is busy"}}"#
+        );
+        assert_eq!(
+            aily_failure_message("", "", 7),
+            "aily-cli exited with code 7"
+        );
+    }
+
+    #[test]
+    fn exposes_the_feishu_aily_daemon_as_an_ordinary_toggle() {
+        assert_eq!(control_mode("feishuAily"), "toggle");
+        assert!(!is_direct_system_toggle("feishuAily"));
+    }
+
+    #[test]
+    fn never_shuts_the_aily_daemon_down_when_onetouch_quits() {
+        let production = include_str!("lib.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let quit_path = production
+            .split("fn stop_transient_features")
+            .nth(1)
+            .expect("stop_transient_features is defined in the production source");
+
+        assert!(!quit_path.contains("set_feishu_aily"));
+        assert!(!quit_path.contains("feishuAily"));
     }
 
     #[cfg(target_os = "macos")]

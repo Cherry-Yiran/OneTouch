@@ -65,6 +65,7 @@ macOS settings are rarely difficult to find, but repeatedly opening Settings, sw
 - Control Music and Spotify playback
 - Global shortcuts, launch at login, and lock screen
 - Quit other Dock apps normally while keeping your current app, OneTouch, and Finder open
+- Start or stop the Feishu aily background service without reopening Terminal after a reboot
 
 ### Cleanup and devices
 
@@ -74,7 +75,7 @@ macOS settings are rarely difficult to find, but repeatedly opening Settings, sw
 - Eject external disks or mounted DMGs, with a protection list for important disks
 - Mute the microphone
 
-OneTouch currently includes **30 controls**. Hardware-dependent or unavailable controls are clearly shown as unavailable.
+OneTouch currently includes **31 controls**. Hardware-dependent or unavailable controls are clearly shown as unavailable.
 
 ## Install
 
@@ -95,6 +96,7 @@ Public builds use a stable OneTouch signing certificate and a separate Tauri upd
 - Keyboard Cleaning ignores regular, modifier, function, and media keys until you turn it off with the mouse.
 - Clear Downloads moves every item in Downloads to the system Trash; it does not permanently delete files.
 - Quit Other Apps sends the standard macOS quit request and never force-quits apps.
+- Feishu aily requires `~/.aily-cli/bin/aily-cli` and shows as unavailable when it is missing. A cold start can take tens of seconds, and quitting OneTouch leaves the service running.
 - Use Preferences → Customise to select and reorder controls.
 - Use Preferences → Shortcuts to record optional global shortcuts.
 
