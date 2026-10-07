@@ -18,6 +18,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(target_os = "macos")]
+mod launchd_command;
 #[cfg(not(target_os = "macos"))]
 use tauri::{
     image::Image,
@@ -1803,7 +1805,7 @@ fn aily_daemon_running() -> Option<bool> {
 fn set_feishu_aily(enabled: bool) -> Result<(), String> {
     let wrapper = aily_cli_wrapper().ok_or_else(|| AILY_CLI_NOT_INSTALLED.to_string())?;
     let capture = if enabled {
-        capture_command_with_timeout(
+        start_aily_command(
             aily_command(
                 &wrapper,
                 &["daemon", "start"],
@@ -1838,6 +1840,16 @@ fn set_feishu_aily(enabled: bool) -> Result<(), String> {
         &capture.stderr,
         capture.code,
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn start_aily_command(command: Command, timeout: Duration) -> Result<ProcessCapture, String> {
+    launchd_command::run(command, timeout)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_aily_command(command: Command, timeout: Duration) -> Result<ProcessCapture, String> {
+    capture_command_with_timeout(command, timeout)
 }
 
 fn clean_xcode_derived_data() -> Result<(), String> {
