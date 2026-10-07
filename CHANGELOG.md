@@ -2,6 +2,18 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-10-07
+
+### 修复
+
+- 飞书 Aily 后台服务改由一次性的 macOS `launchd` 任务独立启动，避免服务访问受保护文件时把隐私权限请求错误归到 OneTouch。
+- 临时启动任务完成或失败后会自动卸载并清理，不会新增登录启动项；已经启动的 Aily 后台服务仍可在退出 OneTouch 后继续运行。
+
+### 验证
+
+- 增加 `launchd` 参数与环境传递、错误输出、超时清理、后台服务存活和内核隐私责任归属测试。
+- 发布前继续验证完整 UI、Rust 测试、生产构建、macOS 代码签名和 Tauri 更新包签名。
+
 ## [1.2.0] - 2026-09-20
 
 ### 新增
@@ -195,6 +207,7 @@ OneTouch 进入首个稳定正式版本。
 - OneTouch 首个公开测试版本。
 - 提供菜单栏快捷控制、自定义排序、定时开关、全局快捷键与原生 macOS 设置界面。
 
+[1.2.1]: https://github.com/Cherry-Yiran/OneTouch/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Cherry-Yiran/OneTouch/compare/v0.3.4...v1.0.0
