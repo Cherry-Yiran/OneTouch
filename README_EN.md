@@ -96,7 +96,7 @@ Public builds use a stable OneTouch signing certificate and a separate Tauri upd
 - Keyboard Cleaning ignores regular, modifier, function, and media keys until you turn it off with the mouse.
 - Clear Downloads moves every item in Downloads to the system Trash; it does not permanently delete files.
 - Quit Other Apps sends the standard macOS quit request and never force-quits apps.
-- Feishu aily requires `~/.aily-cli/bin/aily-cli` and shows as unavailable when it is missing. A cold start can take tens of seconds, and quitting OneTouch leaves the service running.
+- Feishu aily requires `~/.aily-cli/bin/aily-cli` and shows as unavailable when it is missing. A cold start can take tens of seconds, and macOS `launchd` starts the service independently; quitting OneTouch leaves it running, and this does not add a login startup registration.
 - Use Preferences → Customise to select and reorder controls.
 - Use Preferences → Shortcuts to record optional global shortcuts.
 
