@@ -6,7 +6,11 @@
 
 <p align="center"><strong>一个开关，处理 Mac 上每天重复的小事。</strong></p>
 
-[中文](#中文) | [English](#english)
+<p align="center">
+  <strong>简体中文</strong>
+  ·
+  <a href="README_EN.md">English</a>
+</p>
 
 <p align="center">
   OneTouch 是一款原生 macOS 菜单栏工具，把专注、显示、清理、设备与常用系统控制收进一个轻量面板。
@@ -37,11 +41,7 @@
 
 ---
 
-<a id="中文"></a>
-
-## 中文
-
-### 为什么是 OneTouch
+## 为什么是 OneTouch
 
 很多 macOS 设置并不难找，但每天重复打开设置、切换状态、确认权限，会打断正在做的事。OneTouch 把这些操作放到菜单栏：点一下开关，完成后继续工作。
 
@@ -51,15 +51,15 @@
 - **原生 macOS 体验**：面板、开关、菜单、设置窗口和动态材质直接使用 AppKit
 - **本机完成**：系统操作在本机执行，不上传操作数据
 
-### 能做什么
+## 能做什么
 
-#### 专注与显示
+### 专注与显示
 
 - 深色模式、专注模式与保持唤醒，支持原生时长选择
 - Night Shift、原彩显示、低电量模式与高能耗模式
 - 切换屏幕分辨率、显示器休眠、屏幕保护程序与台前调度
 
-#### 桌面与效率
+### 桌面与效率
 
 - 隐藏桌面图标、小组件、Dock 与 Finder 隐藏文件
 - 控制 Music 与 Spotify 播放
@@ -67,7 +67,7 @@
 - 一键正常退出其他 Dock 应用，同时保留当前工作应用、OneTouch 与 Finder
 - 启动或停止飞书 aily 后台服务，重启后无需再打开终端
 
-#### 清理与设备
+### 清理与设备
 
 - 屏幕清洁与键盘清洁
 - 清理下载文件夹、Xcode 缓存、废纸篓与剪贴板
@@ -77,7 +77,7 @@
 
 OneTouch 当前提供 **31 个控制项**。不支持的硬件能力或未安装的应用会直接显示为不可用。
 
-### 下载安装
+## 下载安装
 
 1. 前往 [Releases](https://github.com/Cherry-Yiran/OneTouch/releases/latest) 下载最新的 `OneTouch_*_aarch64.dmg`
 2. 打开 DMG，将 OneTouch 拖入“应用程序”
@@ -88,7 +88,7 @@ OneTouch 当前提供 **31 个控制项**。不支持的硬件能力或未安装
 
 公开构建使用固定的 OneTouch macOS 签名证书，并通过独立的 Tauri 更新签名校验；任一步签名验证失败，GitHub Actions 都不会公开 Release。由于没有走 Apple Developer ID 公证，首次打开时 macOS 仍可能要求前往“系统设置 → 隐私与安全性”手动允许。安装后可在“关于”页面检查、下载并安装新版本。
 
-### 使用说明
+## 使用说明
 
 - 普通控制：点击开关立即切换状态
 - 一次性操作：开关在执行期间保持开启，完成后自动关闭
@@ -100,7 +100,7 @@ OneTouch 当前提供 **31 个控制项**。不支持的硬件能力或未安装
 - 自定义：在“偏好设置 → 自定义”中选择控制项并调整顺序
 - 快捷键：在“偏好设置 → 快捷键”中为任意控制项录制全局快捷键
 
-### 权限与安全边界
+## 权限与安全边界
 
 OneTouch 首次启动时会引导完成核心能力需要的辅助功能授权，避免之后反复中断操作。自动化、蓝牙或专注状态等专项权限只会在使用对应功能时请求。
 
@@ -110,7 +110,7 @@ OneTouch 首次启动时会引导完成核心能力需要的辅助功能授权�
 - 不会自动推出受保护的磁盘
 - 更新包会使用 Tauri 签名校验
 
-### 开发
+## 开发
 
 技术栈：React、Vite、Tauri 2、Rust、Objective-C / AppKit、Core Graphics 与 IOBluetooth。
 
@@ -138,127 +138,13 @@ pnpm native:build
 
 构建产物位于 `src-tauri/target/release/bundle/`。推送 `v*` 标签会通过 GitHub Actions 创建草稿 Release，使用 `APPLE_CERTIFICATE` 与 `APPLE_SIGNING_IDENTITY` 完成固定身份签名，并使用 Tauri 私钥签署更新包；校验通过后才会公开并上传 DMG、自动更新包、签名和 `latest.json`。
 
-### 设计与实现
+## 设计与实现
 
 OneTouch 坚持使用 Apple 公开的 AppKit 组件与系统语义参数，不手工模拟 macOS 的玻璃材质、颜色、模糊强度、按钮状态或菜单行为。
 
 - [界面设计原则与布局约束](docs/DESIGN_PRINCIPLES.md)
 - [Apple 官方组件来源](docs/APPLE_COMPONENTS.md)
 
-### 参与项目
+## 参与项目
 
 欢迎提交 [Issue](https://github.com/Cherry-Yiran/OneTouch/issues) 或 Pull Request。问题反馈请尽量附上 macOS 版本、OneTouch 版本、复现步骤和截图。
-
----
-
-<a id="english"></a>
-
-## English
-
-### Why OneTouch
-
-macOS settings are rarely difficult to find, but repeatedly opening Settings, switching a state, and handling permissions interrupts your work. OneTouch keeps those actions in the menu bar so one switch gets the job done.
-
-- **One place:** frequently used controls live together in the menu bar.
-- **One interaction:** both persistent settings and one-time actions use a consistent switch interaction.
-- **Your order:** choose any number of controls, search them, and drag to reorder. The panel stays compact and scrolls after eight items.
-- **Native macOS experience:** panels, switches, menus, preferences, and dynamic materials use AppKit.
-- **Local by default:** system actions run on your Mac; OneTouch does not upload activity data.
-
-### Features
-
-#### Focus and display
-
-- Dark Mode, Focus, and Keep Awake with native duration choices
-- Night Shift, True Tone, Low Power Mode, and High Power Mode
-- Screen resolution, display sleep, screen saver, and Stage Manager
-
-#### Desktop and productivity
-
-- Hide desktop icons, widgets, the Dock, or show hidden Finder files
-- Control Music and Spotify playback
-- Global shortcuts, launch at login, and lock screen
-- Quit other Dock apps normally while keeping your current app, OneTouch, and Finder open
-- Start or stop the Feishu aily background service without reopening Terminal after a reboot
-
-#### Cleanup and devices
-
-- Screen cleaning and keyboard cleaning
-- Clear Downloads, Xcode derived data, Trash, and clipboard
-- Connect Bluetooth headphones and view their battery level
-- Eject external disks or mounted DMGs, with a protection list for important disks
-- Mute the microphone
-
-OneTouch currently includes **31 controls**. Hardware-dependent or unavailable controls are clearly shown as unavailable.
-
-### Install
-
-1. Open the [latest release](https://github.com/Cherry-Yiran/OneTouch/releases/latest) and download `OneTouch_*_aarch64.dmg`.
-2. Open the DMG and drag OneTouch into Applications.
-3. Follow the first-launch guide to grant Accessibility permission.
-4. Click the switch icon in the menu bar.
-
-The current release supports **Apple Silicon Macs** running **macOS 13 or later**.
-
-Public builds use a stable OneTouch signing certificate and a separate Tauri updater signature. Because the app is not notarised through Apple Developer ID, macOS may ask you to allow the first launch in System Settings → Privacy & Security. After installation, use About → Check for Updates to install later releases.
-
-### How controls behave
-
-- Regular controls switch immediately.
-- One-time actions stay on while running and turn off when complete.
-- Keep Awake, Dark Mode, and Focus show a native duration menu when switched on.
-- Keyboard Cleaning ignores regular, modifier, function, and media keys until you turn it off with the mouse.
-- Clear Downloads moves every item in Downloads to the system Trash; it does not permanently delete files.
-- Quit Other Apps sends the standard macOS quit request and never force-quits apps.
-- Feishu aily requires `~/.aily-cli/bin/aily-cli` and shows as unavailable when it is missing. A cold start can take tens of seconds, and macOS `launchd` starts the service independently; quitting OneTouch leaves it running, and this does not add a login startup registration.
-- Use Preferences → Customise to select and reorder controls.
-- Use Preferences → Shortcuts to record optional global shortcuts.
-
-### Privacy and permissions
-
-OneTouch guides you through the core Accessibility permission on first launch so later controls are not interrupted. Feature-specific Automation, Bluetooth, or Focus permissions are requested only when needed.
-
-- All system actions run locally.
-- OneTouch does not upload control history or personal data.
-- It does not force-quit other apps.
-- Protected disks are never ejected automatically.
-- Update packages are verified with a Tauri signature.
-
-### Development
-
-Stack: React, Vite, Tauri 2, Rust, Objective-C / AppKit, Core Graphics, and IOBluetooth.
-
-Development requires macOS 13+, Node.js, pnpm, Rust stable, and Apple Command Line Tools.
-
-```bash
-pnpm install
-pnpm native:dev
-```
-
-Run tests:
-
-```bash
-pnpm test:ui
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-Build the app:
-
-```bash
-TAURI_SIGNING_PRIVATE_KEY="$(< /path/to/onetouch.key)" \
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-key-password" \
-pnpm native:build
-```
-
-Build artifacts are written to `src-tauri/target/release/bundle/`. Pushing a `v*` tag creates a draft GitHub Release. GitHub Actions signs the app with the configured macOS certificate and signs updater artifacts with the Tauri private key before publishing them.
-
-### Design and implementation
-
-OneTouch uses Apple public AppKit components and semantic system parameters. It does not manually imitate macOS glass, colours, blur levels, button states, or menu behaviour.
-
-- [Interface principles and layout constraints](docs/DESIGN_PRINCIPLES.md)
-- [Apple component references](docs/APPLE_COMPONENTS.md)
-
-### Contributing
-
-Issues and pull requests are welcome. When reporting a problem, please include your macOS version, OneTouch version, steps to reproduce, and a screenshot when possible.
